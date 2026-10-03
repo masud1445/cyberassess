@@ -53,9 +53,14 @@ def _category_for_result(result: dict) -> str:
     return "Other"
 
 
-def _display_value(result: dict, value: Any) -> str:
-    """Convert raw booleans into clearer security-language labels."""
+def _display_value(result: dict, value: Any, expected: bool = False) -> str:
+    """Convert raw values into clearer security-language labels."""
     control_id = str(result.get("control_id", "")).upper()
+    if control_id == "SSH-005":
+        if expected:
+            return "> 0 sec"
+        if value is not None:
+            return f"{value} sec"
     if control_id == "UPD-001" and isinstance(value, bool):
         return "Enabled" if value else "Disabled"
     if control_id == "SVC-001" and isinstance(value, bool):
@@ -172,7 +177,19 @@ def _score_ring(score: float, color: str) -> str:
     """
 
 
-def _all_clear(total_controls: int) -> str:
+def _all_clear(total_controls: int, errors: int = 0) -> str:
+    if errors:
+        return (
+            '<div class="all-clear assessment-warning" '
+            'style="display:flex;align-items:center;gap:8px;'
+            'color:#8a5a00;font-weight:700;'
+            'border-color:#f0d28a;background:#fff8e8;">'
+            '<span aria-hidden="true" style="font-size:1.2em;">!</span>'
+            f'<span>No failed controls, but {errors} control'
+            f'{"s" if errors != 1 else ""} could not be assessed.</span>'
+            '</div>'
+        )
+
     return (
         '<div class="all-clear" '
         'style="display:flex;align-items:center;gap:8px;'
@@ -188,6 +205,7 @@ def _severity_donut(
     medium: int,
     low: int,
     total_controls: int,
+    errors: int = 0,
 ) -> str:
     total = high + medium + low
 
@@ -221,7 +239,7 @@ def _severity_donut(
             </svg>
 
             <div class="legend">
-                {_all_clear(total)}
+                {_all_clear(total_controls, errors)}
             </div>
         </div>
         """
@@ -263,7 +281,7 @@ def _category_bars(results: list[dict]) -> str:
         category = _category_for_result(result)
         data = categories.setdefault(category, {"passed": 0, "scoreable": 0})
         status = str(result.get("status", "")).upper()
-        if status in {"PASS", "FAIL"}:
+        if status in {"PASS", "FAIL", "ERROR"}:
             data["scoreable"] += 1
         if status == "PASS":
             data["passed"] += 1
@@ -293,7 +311,7 @@ def _severity_badge(severity: str) -> str:
 def _gap_card(result: dict) -> str:
     severity = str(result.get("severity", "LOW")).upper()
     accent = SEVERITY_COLORS.get(severity, "#667085")
-    expected = _safe(_display_value(result, result.get("expected")))
+    expected = _safe(_display_value(result, result.get("expected"), expected=True))
     actual = _safe(_display_value(result, result.get("actual")))
     evidence = _safe(_evidence_for_result(result))
     command = _safe(_fix_command(result))
@@ -345,14 +363,14 @@ def render_html(report: dict) -> str:
           <td><strong>{_safe(r.get('title',''))}</strong><div class="table-category">{_safe(_category_for_result(r))}</div></td>
           <td>{_severity_badge(r.get('severity',''))}</td>
           <td>{_status_badge(r.get('status',''))}</td>
-          <td class="mono">{_safe(_display_value(r, r.get('expected')))}</td>
+          <td class="mono">{_safe(_display_value(r, r.get('expected'), expected=True))}</td>
           <td class="mono">{_safe(_display_value(r, r.get('actual')))}</td>
           <td><span class="nist-pill">{_safe(r.get('nist',''))}</span></td>
         </tr>
         """)
 
     threshold_text = "90%+ Compliant · 70–89.9% Partially compliant · Below 70% Non-compliant"
-    weighted_text = "Severity-weighted score: High ×3, Medium ×2, Low ×1; ERROR controls are excluded from the score denominator."
+    weighted_text = "Severity-weighted score: High ×3, Medium ×2, Low ×1; FAIL or ERROR earns 0 weight, and ERROR remains in the weighted score denominator."
 
     return f"""<!doctype html>
 <html lang="en">
@@ -364,14 +382,14 @@ def render_html(report: dict) -> str:
 :root{{--navy:#0b1f4b;--page:#f6f7fa;--card:#fff;--text:#172033;--muted:#667085;--line:#e2e6ed;--pass:#0f7a55;--pass-soft:#eaf7f1;--fail:#b3261e;--fail-soft:#fceceb;--warn:#a86a00;--warn-soft:#fff4df;--blue:#2f6fed;--blue-soft:#edf3ff;--shadow:0 10px 28px rgba(11,31,75,.07)}}
 *{{box-sizing:border-box}} html{{background:var(--page)}} body{{margin:0;background:linear-gradient(180deg,#f3f5f9 0,var(--page) 420px);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;line-height:1.45}} h1,h2,h3{{font-family:Georgia,"Times New Roman",serif}}
 .report-shell{{width:min(1180px,calc(100% - 36px));margin:34px auto 60px}} .report-header{{position:relative;overflow:hidden;background:linear-gradient(135deg,var(--navy),#123571);color:#fff;border-radius:22px;padding:34px 38px;box-shadow:0 20px 50px rgba(11,31,75,.18)}} .report-header:after{{content:"";position:absolute;width:280px;height:280px;top:-150px;right:-70px;border:1px solid rgba(255,255,255,.15);border-radius:50%}} .eyebrow{{color:#bcd0ff;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}} h1{{position:relative;z-index:1;margin:8px 0 14px;font-size:clamp(30px,4vw,44px);line-height:1.08}} .header-meta{{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:8px}} .chip{{padding:7px 10px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(255,255,255,.08);font-size:12px;color:#eef3ff}}
-.grid-2{{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(420px,1.6fr);gap:20px;margin-top:20px}} .card{{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}} .score-card{{display:flex;align-items:center;justify-content:center;gap:22px;padding:24px;min-height:225px}} .score-ring{{width:160px;height:160px;flex:0 0 auto}} .ring-track,.ring-progress{{fill:none;stroke-width:12}} .ring-track{{stroke:#e7ebf2}} .ring-progress{{stroke-linecap:round;transform:rotate(-90deg);transform-origin:70px 70px}} .ring-number{{fill:var(--text);font-size:21px;font-weight:800}} .ring-label{{fill:var(--muted);font-size:8px;font-weight:800;letter-spacing:.14em}} .verdict{{margin:4px 0 6px;font:700 24px Georgia,serif}} .small{{color:var(--muted);font-size:12px}}
+.grid-2{{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(420px,1.6fr);gap:20px;margin-top:20px}} .card{{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}} .score-card{{display:flex;align-items:center;justify-content:center;gap:22px;padding:24px;min-height:225px}} .score-ring{{width:160px;height:160px;flex:0 0 auto}} .ring-track,.ring-progress{{fill:none;stroke-width:12}} .ring-track{{stroke:#e7ebf2}} .ring-progress{{stroke-linecap:round;transform:rotate(-90deg);transform-origin:70px 70px}} .ring-number{{fill:var(--text);font-size:21px;font-weight:800}} .ring-label{{fill:var(--muted);font-size:8px;font-weight:800;letter-spacing:.14em}} .verdict{{margin:4px 0 6px;font:700 24px Georgia,serif;white-space:nowrap}} .small{{color:var(--muted);font-size:12px}}
 .metrics{{padding:20px}} .metrics-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}} .metric{{padding:17px;border:1px solid var(--line);border-radius:14px;background:#fbfcfe}} .metric strong{{display:block;font:700 29px Georgia,serif}} .metric.pass strong{{color:var(--pass)}} .metric.fail strong{{color:var(--fail)}} .metric span{{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.07em;text-transform:uppercase}} .method-note{{margin-top:14px;padding:11px 12px;background:#f7f9fc;border-radius:10px;color:var(--muted);font-size:11px}}
 .analytics{{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(360px,1.4fr);gap:20px;margin-top:20px}} .analytics .card{{padding:21px}} .kicker{{color:var(--blue);font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}} .section-title{{margin:4px 0 15px;font-size:24px}} .severity-wrap{{display:flex;align-items:center;gap:22px}} .severity-donut{{width:130px;height:130px}} .donut-track,.donut-segment{{fill:none;stroke-width:13}} .donut-track{{stroke:#edf0f5}} .donut-segment{{transform:rotate(-90deg);transform-origin:60px 60px}} .donut-number{{fill:var(--text);font-size:18px;font-weight:800}} .donut-label{{fill:var(--muted);font-size:7px;font-weight:800}} .legend{{display:grid;gap:9px;min-width:125px}} .legend div{{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);font-size:12px}} .dot{{width:9px;height:9px;border-radius:50%}} .dot.high{{background:var(--fail)}} .dot.medium{{background:var(--warn)}} .dot.low{{background:var(--blue)}} .category-row{{margin-bottom:13px}} .category-meta{{display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px}} .bar-track{{height:8px;background:#e9edf4;border-radius:999px;overflow:hidden}} .bar-fill{{height:100%;background:linear-gradient(90deg,var(--blue),#4e89ff);border-radius:inherit}}
 .section{{margin-top:28px}} .section-head{{display:flex;justify-content:space-between;gap:16px;align-items:end;margin-bottom:13px}} .section-head h2{{margin:0;font-size:27px}} .gaps-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}} .gap-card{{padding:18px;border:1px solid var(--line);border-left:5px solid var(--gap-accent);border-radius:15px;background:var(--card);box-shadow:0 7px 22px rgba(11,31,75,.05);break-inside:avoid}} .gap-top,.gap-heading{{display:flex;align-items:center;gap:8px}} .gap-top{{justify-content:space-between}} .control-id{{font:800 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}} .gap-card h3{{margin:12px 0;font-size:19px;line-height:1.2}} .severity-badge,.status-badge,.nist-pill{{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;font-size:9.5px;font-weight:800;letter-spacing:.05em;white-space:nowrap}} .severity-badge{{padding:5px 8px}} .severity-badge.high{{background:var(--fail-soft);color:var(--fail)}} .severity-badge.medium{{background:var(--warn-soft);color:var(--warn)}} .severity-badge.low{{background:var(--blue-soft);color:var(--blue)}} .status-badge{{min-width:52px;padding:5px 9px}} .status-badge.pass{{background:var(--pass-soft);color:var(--pass)}} .status-badge.fail{{background:var(--fail-soft);color:var(--fail)}} .status-badge.error{{background:var(--warn-soft);color:var(--warn)}} .nist-pill{{padding:5px 8px;border:1px solid #dbe3f2;background:#f7f9fc;color:#41506b}} .comparison-grid{{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}} .comparison-box{{padding:10px;border:1px solid var(--line);border-radius:10px;background:#fafbfc}} .comparison-box.actual{{background:var(--fail-soft);border-color:#f3d4d1}} .comparison-box span{{display:block;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}} .comparison-box strong{{font:700 12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}} .finding-line,.remediation-copy{{font-size:11px;color:#455066;margin-top:9px}} .finding-line strong,.remediation-copy strong{{display:block;color:var(--text);margin-bottom:2px}} .remediation-copy p{{margin:0}} .command-label{{margin:10px 0 5px;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}} .command-block{{margin:0;padding:11px 12px;background:#08152e;color:#dce8ff;border-radius:10px;font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;overflow:auto}}
 .controls-card{{overflow:hidden;background:var(--card);border:1px solid var(--line);border-radius:15px;box-shadow:var(--shadow)}} .table-wrap{{overflow-x:auto}} table{{width:100%;border-collapse:collapse;font-size:11px}} thead{{background:#f7f9fc}} th{{padding:11px 10px;text-align:left;color:#526079;font-size:9px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line)}} td{{padding:10px;vertical-align:top;border-bottom:1px solid #edf0f4}} tbody tr:last-child td{{border-bottom:none}} .row-pass{{background:linear-gradient(90deg,rgba(15,122,85,.035),transparent 35%)}} .row-fail{{background:linear-gradient(90deg,rgba(179,38,30,.035),transparent 35%)}} .row-error{{background:linear-gradient(90deg,rgba(168,106,0,.045),transparent 35%)}} .table-category{{margin-top:2px;color:var(--muted);font-size:9px}} .mono{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}} .footer{{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:24px;padding-top:15px;border-top:1px solid var(--line);font-size:10px;color:var(--muted)}} .footer strong{{color:var(--navy)}} .all-clear{{padding:20px;text-align:center;border:1px solid #cae9dc;border-radius:12px;background:var(--pass-soft);color:var(--pass);font-weight:700}}
 @media(max-width:820px){{.report-shell{{width:min(100% - 20px,760px);margin-top:10px}}.grid-2,.analytics,.gaps-grid{{grid-template-columns:1fr}}.report-header{{padding:26px 22px}}}} @media(max-width:560px){{.score-card{{flex-direction:column;text-align:center}}.metrics-grid,.comparison-grid{{grid-template-columns:1fr}}}}
 @media(prefers-color-scheme:dark){{:root{{--page:#0a1020;--card:#10192c;--text:#eef3ff;--muted:#a7b2c7;--line:#26324a}} body{{background:#0a1020}} .metric,.comparison-box{{background:#10192c}} thead{{background:#162138}} .nist-pill{{border-color:#33415e;background:#18233a;color:#c6d4ef}}}}
-@page{{size:A4;margin:12mm}} @media print{{*{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}} html,body{{background:#fff!important}} .report-shell{{width:100%;margin:0}} .report-header{{padding:18px 22px;border-radius:10px;box-shadow:none}} h1{{font-size:25px}} .grid-2{{grid-template-columns:.8fr 1.4fr;gap:9px;margin-top:9px}} .score-card{{min-height:150px;padding:12px}} .score-ring{{width:100px;height:100px}} .metrics{{padding:11px}} .metric{{padding:9px}} .metric strong{{font-size:21px}} .method-note{{font-size:8px;padding:6px;margin-top:7px}} .analytics{{gap:9px;margin-top:9px}} .analytics .card{{padding:11px}} .severity-donut{{width:88px;height:88px}} .section{{margin-top:14px}} .section-head{{margin-bottom:7px}} .section-head h2{{font-size:19px}} .gaps-grid{{gap:6px}} .gap-card{{padding:9px;border-radius:9px;box-shadow:none;break-inside:avoid;page-break-inside:avoid}} .gap-card h3{{margin:5px 0;font-size:12px}} .comparison-grid{{margin:5px 0;gap:5px}} .comparison-box{{padding:5px}} .finding-line{{font-size:8px;margin-top:4px}} .remediation-copy{{display:none}} .command-label{{margin:5px 0 3px;font-size:7px}} .command-block{{padding:5px 6px;font-size:7px;line-height:1.35}} .controls-section{{break-before:page;page-break-before:always}} table{{font-size:7.6px}} th,td{{padding:5px}} tr,.controls-card,.gap-card{{break-inside:avoid;page-break-inside:avoid}} .footer{{margin-top:9px;padding-top:7px;font-size:7.5px}}}}
+@page{{size:A4;margin:12mm}} @media print{{*{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}} html,body{{background:#fff!important}} .report-shell{{width:100%;margin:0}} .report-header{{padding:18px 22px;border-radius:10px;box-shadow:none}} .card,.controls-card{{box-shadow:none!important}} .score-card{{gap:12px}} .verdict{{font-size:15px}} h1{{font-size:25px}} .grid-2{{grid-template-columns:.8fr 1.4fr;gap:9px;margin-top:9px}} .score-card{{min-height:150px;padding:12px}} .score-ring{{width:100px;height:100px}} .metrics{{padding:11px}} .metric{{padding:9px}} .metric strong{{font-size:21px}} .method-note{{font-size:8px;padding:6px;margin-top:7px}} .analytics{{gap:9px;margin-top:9px}} .analytics .card{{padding:11px}} .severity-donut{{width:88px;height:88px}} .section{{margin-top:14px}} .section-head{{margin-bottom:7px}} .section-head h2{{font-size:19px}} .gaps-grid{{gap:6px}} .gap-card{{padding:9px;border-radius:9px;box-shadow:none;break-inside:avoid;page-break-inside:avoid}} .gap-card h3{{margin:5px 0;font-size:12px}} .comparison-grid{{margin:5px 0;gap:5px}} .comparison-box{{padding:5px}} .finding-line{{font-size:8px;margin-top:4px}} .remediation-copy{{display:none}} .command-label{{margin:5px 0 3px;font-size:7px}} .command-block{{padding:5px 6px;font-size:7px;line-height:1.35}} .controls-section{{break-before:page;page-break-before:always}} table{{font-size:7.6px}} th,td{{padding:5px}} tr,.controls-card,.gap-card{{break-inside:avoid;page-break-inside:avoid}} .footer{{margin-top:9px;padding-top:7px;font-size:7.5px}}}}
 </style>
 </head>
 <body>
@@ -383,7 +401,7 @@ def render_html(report: dict) -> str:
       <span class="chip">Target: <strong>{target}</strong></span>
       <span class="chip">{platform}</span>
       <span class="chip">Scan: {scan_date}</span>
-      <span class="chip">15-control Ubuntu baseline · NIST SP 800-53 mapped</span>
+      <span class="chip">{total}-control Ubuntu baseline · NIST SP 800-53 mapped</span>
     </div>
   </header>
 
@@ -403,13 +421,13 @@ def render_html(report: dict) -> str:
   </section>
 
   <section class="analytics">
-    <div class="card"><div class="kicker">Risk distribution</div><h2 class="section-title">Failed controls</h2>{_severity_donut(high, medium, low, total)}</div>
+    <div class="card"><div class="kicker">Risk distribution</div><h2 class="section-title">Failed controls</h2>{_severity_donut(high, medium, low, total, errors)}</div>
     <div class="card"><div class="kicker">Coverage</div><h2 class="section-title">Pass rate by category</h2>{_category_bars(results)}</div>
   </section>
 
-  <section class="section gaps-section">
+  <section class="section gaps-section" style="{'' if failures else 'display:none'}">
     <div class="section-head"><div><div class="kicker">Priority remediation</div><h2>Gaps to fix</h2></div><div class="small">Sorted highest risk first</div></div>
-    <div class="gaps-grid">{''.join(_gap_card(r) for r in failures) if failures else _all_clear(total)}</div>
+    <div class="gaps-grid">{''.join(_gap_card(r) for r in failures) if failures else _all_clear(total, errors)}</div>
   </section>
 
   <section class="section controls-section">

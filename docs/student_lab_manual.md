@@ -1,46 +1,51 @@
-# CyberAssess — Student / User Lab Manual
+# CyberAssess — Student Lab Manual
+## Automated Ubuntu Security Baseline Assessment
 
-## 1. Objective
-Use CyberAssess to run a read-only baseline assessment against an authorized Ubuntu lab, interpret the findings, manually remediate one or more approved gaps, and rerun the assessment to prove measurable improvement.
+### 1. Lab Objective
 
-## 2. Prerequisites
-- macOS/Linux workstation with Python 3
-- CyberAssess project and dependencies installed
-- authorized Ubuntu VM reachable over SSH
-- SSH key access to the lab
+The purpose of this lab is to use **CyberAssess** to perform an automated, read-only cybersecurity baseline assessment against an authorized Ubuntu Linux system.
 
-## 3. Run the assessment
-Activate the environment and run:
+CyberAssess collects live system evidence over SSH, compares the evidence with configured security controls, calculates PASS / FAIL / ERROR results, produces a compliance score, and generates a gap report.
 
-```bash
-cd ~/Projects/cyberassess
-source .venv/bin/activate
-export PYTHONPATH=.
-python main.py --host 192.168.252.2 --user ubuntu --key ~/.ssh/cyberassess_lab
-```
+The complete workflow is:
 
-CyberAssess produces a JSON file and an HTML report in `reports/`.
+**Live evidence collection → baseline evaluation → PASS / FAIL / ERROR scoring → gap review → authorized manual remediation → reassessment**
 
-## 4. Interpret the result
-- PASS: collected evidence satisfies the control.
-- FAIL: evidence was collected, but the control is non-compliant.
-- ERROR: the tool could not reliably assess the control.
+CyberAssess does not automatically modify the target system.
 
-The score is severity weighted: HIGH ×3, MEDIUM ×2, LOW ×1. Report verdicts are 90%+ Compliant, 70–89.9% Partially compliant, and below 70% Non-compliant.
+---
 
-## 5. Review a gap
-For each failed control, review:
-- severity;
-- expected value;
-- actual value;
-- control-specific evidence;
-- NIST mapping;
-- remediation guidance and suggested command.
+### 2. Learning Outcomes
 
-Do not copy remediation commands blindly. Preserve SSH access, validate configuration syntax, and change only systems you are authorized to administer.
+After completing this lab, the student should be able to:
 
-## 6. Reassess
-After an approved manual change, rerun the same live command. Compare the earlier report with the new report and record which controls changed from FAIL to PASS and how the weighted score changed.
+- run a Python-based automated security assessment;
+- collect live Ubuntu configuration evidence through SSH;
+- interpret PASS, FAIL and ERROR results;
+- compare expected and actual security values;
+- identify security gaps and remediation guidance;
+- understand selected NIST SP 800-53 mappings;
+- manually remediate an approved lab issue;
+- rerun the assessment and verify measurable improvement.
 
-## 7. Evidence for the internship log
-Record the date/time, target, controls tested, result summary, blocker/edge case, test evidence and Git commit hash. Keep a before/after report pair for the final demonstration.
+---
+
+### 3. Prerequisites
+
+Required environment:
+
+- macOS or Linux workstation;
+- Python 3;
+- CyberAssess project and dependencies;
+- authorized Ubuntu Linux VM/server;
+- SSH connectivity;
+- authorized SSH private key;
+- Python virtual environment.
+
+Example lab environment:
+
+```text
+Target: cyberlab
+Platform: Ubuntu Linux
+Connection: SSH / Paramiko
+Assessment mode: Read-only
