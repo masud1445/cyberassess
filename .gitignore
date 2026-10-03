@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.DS_Store
+__MACOSX/
+*.backup.py
+*.backup.json
+
+# Temporary / safety backup files
+*.before-*.py
+
+# Generated assessment reports
+reports/audit_*.json
+reports/audit_*.html
+reports/LIVE_*.json
+reports/LIVE_*.html
+reports/BEFORE_*.json
+reports/BEFORE_*.html
+reports/AFTER_*.json
+reports/AFTER_*.html
+reports/COMPARISON_*.html
+
+# Keep final validation evidence
+!reports/FINAL_LIVE_VALIDATION_100.json
+!reports/FINAL_LIVE_VALIDATION_100.html

@@ -1,0 +1,253 @@
+{
+  "target_name": "cyberlab",
+  "platform": "Ubuntu Linux",
+  "collector": {
+    "method": "SSH / Paramiko",
+    "host": "192.168.252.2",
+    "username": "ubuntu",
+    "read_only": true
+  },
+  "evidence": {
+    "sshd": {
+      "PermitRootLogin": "no",
+      "PasswordAuthentication": "no",
+      "MaxAuthTries": 4,
+      "X11Forwarding": "no",
+      "ClientAliveInterval": 300,
+      "_collection_ok": true,
+      "_raw": "PermitRootLogin=no\nPasswordAuthentication=no\nMaxAuthTries=4\nX11Forwarding=no\nClientAliveInterval=300"
+    },
+    "firewall": {
+      "status": "active",
+      "_collection_ok": true,
+      "_raw": "active"
+    },
+    "files": {
+      "shadow_mode": "640",
+      "passwd_mode": "644",
+      "_collection_ok": true,
+      "_raw": "shadow_mode=640; passwd_mode=644"
+    },
+    "accounts": {
+      "empty_password_count": 0,
+      "uid0_nonroot_count": 0,
+      "_collection_ok": true,
+      "_raw": "empty_password_count=0; uid0_nonroot_count=0"
+    },
+    "password_policy": {
+      "minimum_length": 14,
+      "configured": true,
+      "_collection_ok": true,
+      "_raw": "minimum_length=14"
+    },
+    "auditd": {
+      "status": "active",
+      "_collection_ok": true,
+      "_raw": "active"
+    },
+    "updates": {
+      "enabled": true,
+      "_collection_ok": true,
+      "_raw": "true"
+    },
+    "time_sync": {
+      "status": "active",
+      "_collection_ok": true,
+      "_raw": "active"
+    },
+    "services": {
+      "telnet_installed": false,
+      "_collection_ok": true,
+      "_raw": "telnet_installed=false"
+    }
+  },
+  "assessment": {
+    "total_controls": 15,
+    "passed": 15,
+    "failed": 0,
+    "errors": 0,
+    "compliance_score": 100.0,
+    "results": [
+      {
+        "control_id": "SSH-001",
+        "title": "Disable direct SSH root login",
+        "severity": "HIGH",
+        "status": "PASS",
+        "expected": "no",
+        "actual": "no",
+        "nist": "AC-6",
+        "remediation": "Set PermitRootLogin no in the SSH server configuration and reload SSH after validating access.",
+        "notes": null,
+        "raw_evidence": "PermitRootLogin=no\nPasswordAuthentication=no\nMaxAuthTries=4\nX11Forwarding=no\nClientAliveInterval=300"
+      },
+      {
+        "control_id": "SSH-002",
+        "title": "Disable SSH password authentication",
+        "severity": "HIGH",
+        "status": "PASS",
+        "expected": "no",
+        "actual": "no",
+        "nist": "IA-2",
+        "remediation": "Use SSH keys, set PasswordAuthentication no, and reload SSH after confirming key-based access works.",
+        "notes": null,
+        "raw_evidence": "PermitRootLogin=no\nPasswordAuthentication=no\nMaxAuthTries=4\nX11Forwarding=no\nClientAliveInterval=300"
+      },
+      {
+        "control_id": "SSH-003",
+        "title": "Limit SSH MaxAuthTries to 4 or lower",
+        "severity": "MEDIUM",
+        "status": "PASS",
+        "expected": 4,
+        "actual": 4,
+        "nist": "AC-7",
+        "remediation": "Set MaxAuthTries 4 or lower in the SSH server configuration and reload SSH.",
+        "notes": null,
+        "raw_evidence": "PermitRootLogin=no\nPasswordAuthentication=no\nMaxAuthTries=4\nX11Forwarding=no\nClientAliveInterval=300"
+      },
+      {
+        "control_id": "SSH-004",
+        "title": "Disable SSH X11 forwarding",
+        "severity": "LOW",
+        "status": "PASS",
+        "expected": "no",
+        "actual": "no",
+        "nist": "CM-7",
+        "remediation": "Set X11Forwarding no in the SSH server configuration and reload SSH.",
+        "notes": null,
+        "raw_evidence": "PermitRootLogin=no\nPasswordAuthentication=no\nMaxAuthTries=4\nX11Forwarding=no\nClientAliveInterval=300"
+      },
+      {
+        "control_id": "SSH-005",
+        "title": "Configure SSH idle timeout",
+        "severity": "MEDIUM",
+        "status": "PASS",
+        "expected": 1,
+        "actual": 300,
+        "nist": "AC-12",
+        "remediation": "Configure ClientAliveInterval with a non-zero value to reduce unattended SSH sessions.",
+        "notes": null,
+        "raw_evidence": "PermitRootLogin=no\nPasswordAuthentication=no\nMaxAuthTries=4\nX11Forwarding=no\nClientAliveInterval=300"
+      },
+      {
+        "control_id": "NET-001",
+        "title": "Host firewall is active",
+        "severity": "HIGH",
+        "status": "PASS",
+        "expected": "active",
+        "actual": "active",
+        "nist": "SC-7",
+        "remediation": "Allow required management access first, then enable and verify the host firewall.",
+        "notes": null,
+        "raw_evidence": "active"
+      },
+      {
+        "control_id": "FILE-001",
+        "title": "/etc/shadow permissions are 640 or stricter",
+        "severity": "HIGH",
+        "status": "PASS",
+        "expected": "640",
+        "actual": "640",
+        "nist": "AC-6",
+        "remediation": "Review ownership and permissions on /etc/shadow and restrict them to 640 or stricter.",
+        "notes": null,
+        "raw_evidence": "shadow_mode=640; passwd_mode=644"
+      },
+      {
+        "control_id": "FILE-002",
+        "title": "/etc/passwd permissions are 644 or stricter",
+        "severity": "MEDIUM",
+        "status": "PASS",
+        "expected": "644",
+        "actual": "644",
+        "nist": "CM-6",
+        "remediation": "Review ownership and permissions on /etc/passwd and restrict them to 644 or stricter.",
+        "notes": null,
+        "raw_evidence": "shadow_mode=640; passwd_mode=644"
+      },
+      {
+        "control_id": "AUTH-001",
+        "title": "No local accounts have an empty password field",
+        "severity": "HIGH",
+        "status": "PASS",
+        "expected": 0,
+        "actual": 0,
+        "nist": "IA-5",
+        "remediation": "Lock or assign strong credentials to any account with an empty password field.",
+        "notes": null,
+        "raw_evidence": "empty_password_count=0; uid0_nonroot_count=0"
+      },
+      {
+        "control_id": "AUTH-002",
+        "title": "Only root has UID 0",
+        "severity": "HIGH",
+        "status": "PASS",
+        "expected": 0,
+        "actual": 0,
+        "nist": "AC-6",
+        "remediation": "Remove UID 0 from non-root accounts unless there is a documented and approved exception.",
+        "notes": null,
+        "raw_evidence": "empty_password_count=0; uid0_nonroot_count=0"
+      },
+      {
+        "control_id": "AUTH-003",
+        "title": "Minimum password length is 14 or more",
+        "severity": "MEDIUM",
+        "status": "PASS",
+        "expected": 14,
+        "actual": 14,
+        "nist": "IA-5",
+        "remediation": "Configure a minimum password length of at least 14 in the active password quality policy.",
+        "notes": null,
+        "raw_evidence": "minimum_length=14"
+      },
+      {
+        "control_id": "LOG-001",
+        "title": "Audit service is active",
+        "severity": "MEDIUM",
+        "status": "PASS",
+        "expected": "active",
+        "actual": "active",
+        "nist": "AU-12",
+        "remediation": "Install auditd if needed, enable it, and start the audit service.",
+        "notes": null,
+        "raw_evidence": "active"
+      },
+      {
+        "control_id": "UPD-001",
+        "title": "Automatic security updates are enabled",
+        "severity": "MEDIUM",
+        "status": "PASS",
+        "expected": true,
+        "actual": true,
+        "nist": "SI-2",
+        "remediation": "Enable unattended security updates and verify the automatic update configuration.",
+        "notes": null,
+        "raw_evidence": "true"
+      },
+      {
+        "control_id": "TIME-001",
+        "title": "Time synchronization is active",
+        "severity": "LOW",
+        "status": "PASS",
+        "expected": "active",
+        "actual": "active",
+        "nist": "AU-8",
+        "remediation": "Enable and verify system time synchronization using systemd-timesyncd, chrony, or another approved time service.",
+        "notes": null,
+        "raw_evidence": "active"
+      },
+      {
+        "control_id": "SVC-001",
+        "title": "Telnet server is not installed",
+        "severity": "HIGH",
+        "status": "PASS",
+        "expected": false,
+        "actual": false,
+        "nist": "CM-7",
+        "remediation": "Remove the Telnet server package and use SSH for secure remote administration.",
+        "notes": null,
+        "raw_evidence": "telnet_installed=false"
+      }
+    ]
+  }
+}

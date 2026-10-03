@@ -1,0 +1,24 @@
+{
+  "target_name": "demo-host",
+  "platform": "Ubuntu Linux",
+  "collector": {"method": "sample data", "read_only": true},
+  "evidence": {
+    "sshd": {
+      "PermitRootLogin": "prohibit-password",
+      "PasswordAuthentication": "no",
+      "MaxAuthTries": 6,
+      "X11Forwarding": "yes",
+      "ClientAliveInterval": 0,
+      "_collection_ok": true,
+      "_raw": "PermitRootLogin=prohibit-password PasswordAuthentication=no MaxAuthTries=6 X11Forwarding=yes ClientAliveInterval=0"
+    },
+    "firewall": {"status": "inactive", "_collection_ok": true, "_raw": "inactive"},
+    "files": {"shadow_mode": "640", "passwd_mode": "644", "_collection_ok": true, "_raw": "shadow=640 passwd=644"},
+    "accounts": {"empty_password_count": 0, "uid0_nonroot_count": 0, "_collection_ok": true, "_raw": "empty=0 uid0=0"},
+    "password_policy": {"minimum_length": null, "configured": false, "_collection_ok": true, "_raw": "No explicit minimum password length detected"},
+    "auditd": {"status": "not_installed", "_collection_ok": true, "_raw": "not_installed"},
+    "updates": {"enabled": true, "_collection_ok": true, "_raw": "true"},
+    "time_sync": {"status": "inactive", "_collection_ok": true, "_raw": "inactive"},
+    "services": {"telnet_installed": false, "_collection_ok": true, "_raw": "false"}
+  }
+}

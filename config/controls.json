@@ -1,0 +1,167 @@
+[
+  {
+    "id": "SSH-001",
+    "title": "Disable direct SSH root login",
+    "severity": "HIGH",
+    "source": "sshd",
+    "key": "PermitRootLogin",
+    "operator": "EQUALS",
+    "expected": "no",
+    "nist": "AC-6",
+    "remediation": "Set PermitRootLogin no in the SSH server configuration and reload SSH after validating access."
+  },
+  {
+    "id": "SSH-002",
+    "title": "Disable SSH password authentication",
+    "severity": "HIGH",
+    "source": "sshd",
+    "key": "PasswordAuthentication",
+    "operator": "EQUALS",
+    "expected": "no",
+    "nist": "IA-2",
+    "remediation": "Use SSH keys, set PasswordAuthentication no, and reload SSH after confirming key-based access works."
+  },
+  {
+    "id": "SSH-003",
+    "title": "Limit SSH MaxAuthTries to 4 or lower",
+    "severity": "MEDIUM",
+    "source": "sshd",
+    "key": "MaxAuthTries",
+    "operator": "LESS_OR_EQUAL",
+    "expected": 4,
+    "nist": "AC-7",
+    "remediation": "Set MaxAuthTries 4 or lower in the SSH server configuration and reload SSH."
+  },
+  {
+    "id": "SSH-004",
+    "title": "Disable SSH X11 forwarding",
+    "severity": "LOW",
+    "source": "sshd",
+    "key": "X11Forwarding",
+    "operator": "EQUALS",
+    "expected": "no",
+    "nist": "CM-7",
+    "remediation": "Set X11Forwarding no in the SSH server configuration and reload SSH."
+  },
+  {
+    "id": "SSH-005",
+    "title": "Configure SSH idle timeout",
+    "severity": "MEDIUM",
+    "source": "sshd",
+    "key": "ClientAliveInterval",
+    "operator": "GREATER_OR_EQUAL",
+    "expected": 1,
+    "nist": "AC-12",
+    "remediation": "Configure ClientAliveInterval with a non-zero value to reduce unattended SSH sessions."
+  },
+  {
+    "id": "NET-001",
+    "title": "Host firewall is active",
+    "severity": "HIGH",
+    "source": "firewall",
+    "key": "status",
+    "operator": "EQUALS",
+    "expected": "active",
+    "nist": "SC-7",
+    "remediation": "Allow required management access first, then enable and verify the host firewall."
+  },
+  {
+    "id": "FILE-001",
+    "title": "/etc/shadow permissions are 640 or stricter",
+    "severity": "HIGH",
+    "source": "files",
+    "key": "shadow_mode",
+    "operator": "MODE_AT_MOST",
+    "expected": "640",
+    "nist": "AC-6",
+    "remediation": "Review ownership and permissions on /etc/shadow and restrict them to 640 or stricter."
+  },
+  {
+    "id": "FILE-002",
+    "title": "/etc/passwd permissions are 644 or stricter",
+    "severity": "MEDIUM",
+    "source": "files",
+    "key": "passwd_mode",
+    "operator": "MODE_AT_MOST",
+    "expected": "644",
+    "nist": "CM-6",
+    "remediation": "Review ownership and permissions on /etc/passwd and restrict them to 644 or stricter."
+  },
+  {
+    "id": "AUTH-001",
+    "title": "No local accounts have an empty password field",
+    "severity": "HIGH",
+    "source": "accounts",
+    "key": "empty_password_count",
+    "operator": "EQUALS",
+    "expected": 0,
+    "nist": "IA-5",
+    "remediation": "Lock or assign strong credentials to any account with an empty password field."
+  },
+  {
+    "id": "AUTH-002",
+    "title": "Only root has UID 0",
+    "severity": "HIGH",
+    "source": "accounts",
+    "key": "uid0_nonroot_count",
+    "operator": "EQUALS",
+    "expected": 0,
+    "nist": "AC-6",
+    "remediation": "Remove UID 0 from non-root accounts unless there is a documented and approved exception."
+  },
+  {
+    "id": "AUTH-003",
+    "title": "Minimum password length is 14 or more",
+    "severity": "MEDIUM",
+    "source": "password_policy",
+    "key": "minimum_length",
+    "operator": "GREATER_OR_EQUAL",
+    "expected": 14,
+    "nist": "IA-5",
+    "remediation": "Configure a minimum password length of at least 14 in the active password quality policy."
+  },
+  {
+    "id": "LOG-001",
+    "title": "Audit service is active",
+    "severity": "MEDIUM",
+    "source": "auditd",
+    "key": "status",
+    "operator": "EQUALS",
+    "expected": "active",
+    "nist": "AU-12",
+    "remediation": "Install auditd if needed, enable it, and start the audit service."
+  },
+  {
+    "id": "UPD-001",
+    "title": "Automatic security updates are enabled",
+    "severity": "MEDIUM",
+    "source": "updates",
+    "key": "enabled",
+    "operator": "EQUALS",
+    "expected": true,
+    "nist": "SI-2",
+    "remediation": "Enable unattended security updates and verify the automatic update configuration."
+  },
+  {
+    "id": "TIME-001",
+    "title": "Time synchronization is active",
+    "severity": "LOW",
+    "source": "time_sync",
+    "key": "status",
+    "operator": "EQUALS",
+    "expected": "active",
+    "nist": "AU-8",
+    "remediation": "Enable and verify system time synchronization using systemd-timesyncd, chrony, or another approved time service."
+  },
+  {
+    "id": "SVC-001",
+    "title": "Telnet server is not installed",
+    "severity": "HIGH",
+    "source": "services",
+    "key": "telnet_installed",
+    "operator": "EQUALS",
+    "expected": false,
+    "nist": "CM-7",
+    "remediation": "Remove the Telnet server package and use SSH for secure remote administration."
+  }
+]
