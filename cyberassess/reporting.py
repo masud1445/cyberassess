@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -10,12 +10,6 @@ import json
 VERDICT_THRESHOLDS = {
     "COMPLIANT": 90.0,
     "PARTIAL": 70.0,
-}
-
-SEVERITY_COLORS = {
-    "HIGH": "#b3261e",
-    "MEDIUM": "#a86a00",
-    "LOW": "#2f6fed",
 }
 
 
@@ -161,118 +155,30 @@ def _verdict(score: float) -> tuple[str, str]:
     return "Non-compliant", "#b3261e"
 
 
-def _score_ring(score: float, color: str) -> str:
-    score = max(0.0, min(100.0, float(score)))
-    circumference = 326.73
-    dash = circumference * score / 100.0
-    gap = circumference - dash
-    return f"""
-    <svg class="score-ring" viewBox="0 0 140 140" role="img" aria-label="Compliance score {score:.1f} percent">
-      <circle class="ring-track" cx="70" cy="70" r="52" />
-      <circle class="ring-progress" cx="70" cy="70" r="52" stroke="{color}"
-              stroke-dasharray="{dash:.2f} {gap:.2f}" />
-      <text x="70" y="66" text-anchor="middle" class="ring-number">{score:.1f}%</text>
-      <text x="70" y="86" text-anchor="middle" class="ring-label">SCORE</text>
-    </svg>
-    """
-
-
 def _all_clear(total_controls: int, errors: int = 0) -> str:
-    if errors:
-        return (
-            '<div class="all-clear assessment-warning" '
-            'style="display:flex;align-items:center;gap:8px;'
-            'color:#8a5a00;font-weight:700;'
-            'border-color:#f0d28a;background:#fff8e8;">'
-            '<span aria-hidden="true" style="font-size:1.2em;">!</span>'
-            f'<span>No failed controls, but {errors} control'
-            f'{"s" if errors != 1 else ""} could not be assessed.</span>'
-            '</div>'
+    if not total_controls:
+        heading = "No controls assessed"
+        description = "No control results were supplied. Assessment coverage cannot be established."
+        state = "neutral"
+    elif errors:
+        heading = "Assessment incomplete"
+        description = (
+            f"No failed controls were recorded, but {errors} control"
+            f"{'s' if errors != 1 else ''} could not be assessed. "
+            "Review the collection notes before concluding that the baseline is satisfied."
         )
-
+        state = "incomplete"
+    else:
+        heading = "No remediation gaps identified"
+        description = (
+            f"All {total_controls} controls passed the configured baseline. "
+            "Retain this report as a point-in-time record and reassess after configuration changes."
+        )
+        state = "complete"
     return (
-        '<div class="all-clear" '
-        'style="display:flex;align-items:center;gap:8px;'
-        'color:#0f7a55;font-weight:700;">'
-        '<span aria-hidden="true" style="font-size:1.2em;">✓</span>'
-        f'<span>No gaps found. All {total_controls} controls passed.</span>'
-        '</div>'
+        f'<div class="assessment-state {state}">'
+        f'<h3>{heading}</h3><p>{description}</p></div>'
     )
-
-
-def _severity_donut(
-    high: int,
-    medium: int,
-    low: int,
-    total_controls: int,
-    errors: int = 0,
-) -> str:
-    total = high + medium + low
-
-    if total == 0:
-        return f"""
-        <div class="severity-wrap">
-            <svg
-                class="severity-donut"
-                viewBox="0 0 120 120"
-                role="img"
-                aria-label="Failed controls by severity: 0 gaps"
-            >
-                <circle
-                    cx="60"
-                    cy="60"
-                    r="40"
-                    class="donut-track"
-                />
-                <text
-                    x="60"
-                    y="57"
-                    text-anchor="middle"
-                    class="donut-number"
-                >0</text>
-                <text
-                    x="60"
-                    y="72"
-                    text-anchor="middle"
-                    class="donut-label"
-                >GAPS</text>
-            </svg>
-
-            <div class="legend">
-                {_all_clear(total_controls, errors)}
-            </div>
-        </div>
-        """
-    circumference = 251.33
-    values = [
-        (high, "#b3261e", 0.0),
-        (medium, "#a86a00", high),
-        (low, "#2f6fed", high + medium),
-    ]
-    segments = []
-    for count, color, previous_count in values:
-        length = circumference * count / total
-        offset = -(circumference * previous_count / total)
-        segments.append(
-            f'<circle cx="60" cy="60" r="40" class="donut-segment" stroke="{color}" '
-            f'stroke-dasharray="{length:.2f} {circumference - length:.2f}" '
-            f'stroke-dashoffset="{offset:.2f}" />'
-        )
-    return f"""
-    <div class="severity-wrap">
-      <svg class="severity-donut" viewBox="0 0 120 120" role="img" aria-label="Failed controls by severity">
-        <circle cx="60" cy="60" r="40" class="donut-track" />
-        {''.join(segments)}
-        <text x="60" y="57" text-anchor="middle" class="donut-number">{total}</text>
-        <text x="60" y="72" text-anchor="middle" class="donut-label">GAPS</text>
-      </svg>
-      <div class="legend">
-        <div><span class="dot high"></span><span>High</span><strong>{high}</strong></div>
-        <div><span class="dot medium"></span><span>Medium</span><strong>{medium}</strong></div>
-        <div><span class="dot low"></span><span>Low</span><strong>{low}</strong></div>
-      </div>
-    </div>
-    """
 
 
 def _category_bars(results: list[dict]) -> str:
@@ -291,10 +197,11 @@ def _category_bars(results: list[dict]) -> str:
         rate = round(data["passed"] / total * 100) if total else 0
         rows.append(
             f'<div class="category-row"><div class="category-meta"><span>{_safe(category)}</span>'
-            f'<strong>{rate}%</strong></div><div class="bar-track"><div class="bar-fill" '
+            f'<span class="category-count">{data["passed"]}/{total} · {rate}%</span></div>'
+            f'<div class="bar-track" aria-hidden="true"><div class="bar-fill" '
             f'style="width:{rate}%"></div></div></div>'
         )
-    return "".join(rows)
+    return "".join(rows) or '<p class="small">No category results available.</p>'
 
 
 def _status_badge(status: str) -> str:
@@ -305,34 +212,230 @@ def _status_badge(status: str) -> str:
 
 def _severity_badge(severity: str) -> str:
     value = str(severity).upper()
-    return f'<span class="severity-badge {value.lower()}">{_safe(value)}</span>'
+    css = {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"}.get(value, "neutral")
+    return f'<span class="severity-badge {css}">{_safe(value)}</span>'
+
+
+def _evidence_details(result: dict) -> str:
+    notes = result.get("notes")
+    note_html = f'<p class="collection-note"><strong>Collection note:</strong> {_safe(notes)}</p>' if notes else ""
+    return f"""
+    <details class="evidence-details">
+      <summary>Evidence<span class="sr-only"> for {_safe(result.get('control_id', 'control'))}</span></summary>
+      <div class="details-body">
+        <p class="evidence-value">{_safe(_evidence_for_result(result))}</p>
+        {note_html}
+      </div>
+    </details>
+    """
 
 
 def _gap_card(result: dict) -> str:
-    severity = str(result.get("severity", "LOW")).upper()
-    accent = SEVERITY_COLORS.get(severity, "#667085")
     expected = _safe(_display_value(result, result.get("expected"), expected=True))
     actual = _safe(_display_value(result, result.get("actual")))
     evidence = _safe(_evidence_for_result(result))
     command = _safe(_fix_command(result))
     remediation = _safe(result.get("remediation", ""))
+    control_id = _safe(result.get("control_id", ""))
     return f"""
-    <article class="gap-card" style="--gap-accent:{accent}">
+    <article class="gap-card">
       <div class="gap-top">
-        <div class="gap-heading">{_severity_badge(severity)}<span class="control-id">{_safe(result.get('control_id',''))}</span></div>
-        <span class="nist-pill">NIST {_safe(result.get('nist',''))}</span>
+        <div class="gap-heading"><span class="control-id">{control_id}</span>{_severity_badge(result.get('severity', 'LOW'))}</div>
+        <span class="nist-reference">NIST {_safe(result.get('nist', ''))}</span>
       </div>
-      <h3>{_safe(result.get('title',''))}</h3>
-      <div class="comparison-grid">
-        <div class="comparison-box"><span>Expected</span><strong>{expected}</strong></div>
-        <div class="comparison-box actual"><span>Found</span><strong>{actual}</strong></div>
+      <div class="gap-summary">
+        <h3>{_safe(result.get('title', ''))}</h3>
+        <dl class="comparison">
+          <div><dt>Expected</dt><dd>{expected}</dd></div>
+          <div><dt>Actual</dt><dd>{actual}</dd></div>
+        </dl>
       </div>
-      <div class="finding-line"><strong>Evidence</strong><span>{evidence}</span></div>
-      <div class="remediation-copy"><strong>Recommended remediation</strong><p>{remediation}</p></div>
-      <div class="command-label">Suggested command</div>
-      <pre class="command-block"><code>{command}</code></pre>
+      <details class="remediation-details">
+        <summary>Evidence &amp; remediation<span class="sr-only"> for {control_id}</span></summary>
+        <div class="details-body remediation-body">
+          <div><h4>Observed evidence</h4><p class="evidence-value">{evidence}</p></div>
+          <div><h4>Recommended remediation</h4><p>{remediation}</p></div>
+          <div class="command-section"><h4>Suggested command · review before use</h4><pre class="command-block"><code>{command}</code></pre></div>
+        </div>
+      </details>
     </article>
     """
+
+
+_REPORT_CSS = """
+:root {
+  color-scheme: light;
+  --navy: #0b1f4b;
+  --ink: #202b3b;
+  --muted: #596574;
+  --line: #dce1e6;
+  --surface: #f4f6f8;
+  --pass: #245f4b;
+  --fail: #9b332c;
+  --warn: #775c29;
+}
+* { box-sizing: border-box; }
+html { background: #edf0f3; }
+body {
+  margin: 0;
+  color: var(--ink);
+  font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+h1, h2, h3, h4, p, dl { margin: 0; }
+h1, h2, h3 { color: var(--navy); }
+h1 { font-size: 28px; font-weight: 600; line-height: 1.25; letter-spacing: -.025em; }
+h2 { font-size: 17px; font-weight: 600; line-height: 1.35; }
+h3 { font-size: 13px; font-weight: 600; }
+h4, dt { color: var(--muted); font-size: 10px; font-weight: 600; }
+dd { margin: 0; }
+.report-shell { max-width: 1100px; margin: 36px auto 64px; padding: 30px 40px; background: #fff; border: 1px solid var(--line); }
+.report-header { border-top: 3px solid var(--navy); padding-top: 16px; }
+.masthead { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 28px; }
+.brand { color: var(--navy); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.document-label, .small { color: var(--muted); font-size: 11px; }
+.subtitle { margin-top: 8px; color: var(--muted); font-size: 12px; }
+.metadata { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 22px; margin-top: 22px; padding: 17px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.metadata dt { margin-bottom: 4px; }
+.metadata dd { font-size: 12px; overflow-wrap: anywhere; }
+.section { margin-top: 28px; }
+.section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.section-head .small { text-align: right; }
+.summary-content { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; align-items: center; padding: 3px 0 20px; }
+.score-label { color: var(--muted); font-size: 10px; }
+.score-value { color: var(--navy); font-size: 42px; font-weight: 600; line-height: 1.2; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.score-value span { margin-left: 2px; font-size: 22px; }
+.verdict { display: inline-block; margin-bottom: 8px; font-size: 16px; font-weight: 600; }
+.summary-copy p { max-width: 65ch; font-size: 12px; color: var(--muted); }
+.summary-copy p + p { margin-top: 6px; }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line); padding: 14px 0; }
+.metric { padding: 0 18px; border-left: 1px solid var(--line); }
+.metric:first-child { padding-left: 0; border-left: 0; }
+.metric dt { margin-bottom: 2px; }
+.metric dd { font-size: 22px; line-height: 1.3; font-weight: 500; font-variant-numeric: tabular-nums; }
+.methodology { margin-top: 10px; font-size: 11px; color: var(--muted); }
+.methodology .details-body { padding-top: 8px; }
+.methodology p + p { margin-top: 4px; }
+.category-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 28px; }
+.category-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; font-size: 11px; }
+.category-count { flex-shrink: 0; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.bar-track { height: 3px; background: #e8ecf0; }
+.bar-fill { height: 100%; background: var(--navy); }
+.severity-summary { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 10px 0; border-block: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.severity-summary strong { color: var(--ink); font-weight: 600; }
+.gap-card { padding: 15px 0; border-bottom: 1px solid var(--line); }
+.gap-top, .gap-heading { display: flex; align-items: center; gap: 10px; }
+.gap-top { justify-content: space-between; flex-wrap: wrap; }
+.control-id, .mono, .evidence-value, .command-block { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.control-id { font-size: 10px; font-weight: 600; color: var(--muted); }
+.nist-reference { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.gap-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .7fr); gap: 20px; align-items: start; margin: 6px 0 8px; }
+.comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.comparison dt { font-size: 9px; }
+.comparison dd { font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.severity-badge { color: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: .025em; }
+.status-badge { display: inline-block; padding: 2px 6px; border: 1px solid currentColor; border-radius: 2px; font-size: 9px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
+.status-badge.pass { color: var(--pass); background: #eef4f0; }
+.status-badge.fail { color: var(--fail); background: #f8eeec; }
+.status-badge.error { color: var(--warn); background: #f6f1e7; }
+.status-badge.neutral { color: var(--muted); }
+summary { width: fit-content; max-width: 100%; cursor: pointer; color: var(--muted); font-size: 10px; }
+summary::marker { font-size: 8px; }
+summary:hover { color: var(--navy); }
+summary:focus-visible, .table-wrap:focus-visible { outline: 2px solid var(--navy); outline-offset: 4px; }
+.details-body { padding-top: 8px; }
+.remediation-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; font-size: 11px; }
+.remediation-body h4 { margin-bottom: 4px; }
+.evidence-value { font-size: 10px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.command-section { grid-column: 1 / -1; }
+.command-block { margin: 0; padding: 10px 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.assessment-state { padding: 18px 20px; border: 1px solid var(--line); border-left: 3px solid var(--navy); background: #fafbfc; }
+.assessment-state.complete h3 { color: var(--pass); }
+.assessment-state p { margin-top: 5px; max-width: 85ch; font-size: 12px; color: var(--muted); }
+.error-item { padding: 12px 0; border-top: 1px solid var(--line); }
+.error-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px; }
+.error-item p { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.table-wrap { overflow-x: auto; }
+.table-hint { display: none; }
+table { width: 100%; min-width: 780px; table-layout: fixed; border-collapse: collapse; text-align: left; font-size: 11px; }
+caption { padding: 0 0 10px; text-align: left; color: var(--muted); font-size: 10px; }
+col.col-id { width: 10%; } col.col-control { width: 32%; } col.col-severity { width: 9%; }
+col.col-status { width: 10%; } col.col-expected { width: 13%; } col.col-actual { width: 15%; } col.col-nist { width: 11%; }
+thead { background: var(--surface); }
+th, td { padding: 10px 8px; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+thead th { font-size: 9px; font-weight: 600; color: var(--muted); }
+tbody th { font-size: 10px; font-weight: 500; }
+.control-title { font-weight: 600; line-height: 1.45; }
+.table-category { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.evidence-details { margin-top: 6px; }
+.evidence-details .details-body { font-size: 10px; }
+.collection-note { margin-top: 6px; color: var(--muted); }
+.footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 20px; margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 10px; color: var(--muted); }
+.footer strong { color: var(--navy); font-weight: 600; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media screen and (max-width: 1160px) {
+  .report-shell { margin: 24px; }
+}
+@media screen and (max-width: 800px) {
+  .report-shell { margin: 16px; padding: 24px; }
+  .metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-content { grid-template-columns: 150px minmax(0, 1fr); gap: 20px; }
+  .gap-summary { grid-template-columns: 1fr; gap: 8px; }
+  .table-hint { display: block; margin-bottom: 8px; color: var(--muted); font-size: 10px; }
+}
+@media screen and (max-width: 480px) {
+  .report-shell { margin: 0; padding: 20px 16px; border: 0; }
+  h1 { font-size: 24px; }
+  .masthead { flex-direction: column; gap: 4px; margin-bottom: 22px; }
+  .section-head { align-items: start; flex-direction: column; gap: 4px; }
+  .section-head .small { text-align: left; }
+  .summary-content { grid-template-columns: 1fr; gap: 14px; }
+  .score-value { font-size: 36px; }
+  .metrics { gap: 14px 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric:nth-child(3) { padding-left: 0; border-left: 0; }
+  .category-grid, .remediation-body { grid-template-columns: 1fr; }
+  .comparison { gap: 12px; }
+}
+@page { size: A4 portrait; margin: 14mm 12mm; }
+@media print {
+  html, body { background: #fff; }
+  body { font-size: 9pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .report-shell { max-width: none; margin: 0; padding: 0; border: 0; }
+  .report-header { padding-top: 10px; }
+  .masthead { margin-bottom: 16px; }
+  h1 { font-size: 21pt; } h2 { font-size: 12pt; } h3 { font-size: 10pt; }
+  .metadata { gap: 10px 16px; margin-top: 14px; padding: 12px 0; }
+  .metadata dt, h4 { font-size: 7pt; } .metadata dd { font-size: 8pt; }
+  .section { margin-top: 18px; }
+  .section-head { margin-bottom: 10px; break-after: avoid; }
+  .summary-content { grid-template-columns: 140px minmax(0, 1fr); gap: 20px; padding-bottom: 12px; }
+  .score-value { font-size: 30pt; } .verdict { font-size: 12pt; }
+  .summary-copy p, .assessment-state p { font-size: 8pt; }
+  .metrics { padding: 10px 0; } .metric dd { font-size: 16pt; }
+  .category-grid { gap: 12px 20px; }
+  .category-row, .assessment-state, .gap-card, .error-item { break-inside: avoid; page-break-inside: avoid; }
+  .gap-card { padding: 12px 0; }
+  .gap-summary { grid-template-columns: minmax(0, 1fr) minmax(180px, .7fr); gap: 16px; }
+  .remediation-body { font-size: 8pt; }
+  .command-block, .evidence-value { font-size: 7pt; }
+  details > .details-body { display: block !important; }
+  details.remediation-details > .details-body { display: grid !important; }
+  details::details-content { content-visibility: visible !important; display: block !important; }
+  summary { font-size: 7pt; cursor: default; } summary::marker { content: ""; }
+  .table-wrap { overflow: visible; }
+  .screen-only { display: none; }
+  table { min-width: 0; font-size: 8pt; line-height: 1.4; }
+  .evidence-details { margin-top: 4px; }
+  .evidence-details > summary { display: none; }
+  .evidence-details .details-body { padding-top: 0; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  th, td { padding: 7px 5px; }
+  thead th, tbody th, .severity-badge, .status-badge, .nist-reference, .table-category { font-size: 7pt; }
+  .footer { margin-top: 16px; font-size: 7pt; }
+}
+"""
 
 
 def render_html(report: dict) -> str:
@@ -345,8 +448,10 @@ def render_html(report: dict) -> str:
     total = int(assessment.get("total_controls", len(results)))
     target = _safe(report.get("target_name", "Unknown"))
     platform = _safe(report.get("platform", "Unknown"))
-    scan_date = datetime.now().strftime("%d %B %Y · %H:%M")
-    verdict, verdict_color = _verdict(score)
+    generated_at = datetime.now(timezone.utc).strftime("%d %b %Y · %H:%M UTC")
+    collector = report.get("collector") or {}
+    method = _safe(collector.get("method", "Not provided"))
+    verdict, _ = _verdict(score)
 
     severity_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     failures = [r for r in results if str(r.get("status", "")).upper() == "FAIL"]
@@ -354,91 +459,142 @@ def render_html(report: dict) -> str:
     high = sum(str(r.get("severity", "")).upper() == "HIGH" for r in failures)
     medium = sum(str(r.get("severity", "")).upper() == "MEDIUM" for r in failures)
     low = sum(str(r.get("severity", "")).upper() == "LOW" for r in failures)
+    error_results = [r for r in results if str(r.get("status", "")).upper() == "ERROR"]
+
+    metadata = [
+        ("Target", target),
+        ("Platform", platform),
+        ("Collection method", method),
+        ("Report generated", _safe(generated_at)),
+    ]
+    for key, label in (("host", "Connection host"), ("username", "Collection account")):
+        if collector.get(key):
+            metadata.append((label, _safe(collector[key])))
+    metadata_html = "".join(f"<div><dt>{label}</dt><dd>{value}</dd></div>" for label, value in metadata)
+
+    if not results:
+        summary_text = "No control results were supplied. This report does not establish assessment coverage."
+    elif failed:
+        summary_text = (
+            f"{failed} control{'s' if failed != 1 else ''} did not meet the configured baseline. "
+            "Review the remediation findings below, ordered by severity."
+        )
+    elif errors:
+        summary_text = "No failed controls were recorded. Collection errors prevent a complete baseline assessment."
+    else:
+        summary_text = f"All {passed} assessed controls met the configured baseline. No remediation gaps were identified."
+    error_notice = (
+        f'<p>{errors} control{"s" if errors != 1 else ""} could not be assessed. '
+        'Review the assessment errors and collection notes.</p>' if errors and failed else ""
+    )
 
     table_rows = []
     for r in results:
         table_rows.append(f"""
-        <tr class="row-{_safe(str(r.get('status','')).lower())}">
-          <td class="mono">{_safe(r.get('control_id',''))}</td>
-          <td><strong>{_safe(r.get('title',''))}</strong><div class="table-category">{_safe(_category_for_result(r))}</div></td>
-          <td>{_severity_badge(r.get('severity',''))}</td>
-          <td>{_status_badge(r.get('status',''))}</td>
+        <tr>
+          <th scope="row" class="mono">{_safe(r.get('control_id', ''))}</th>
+          <td><div class="control-title">{_safe(r.get('title', ''))}</div><div class="table-category">{_safe(_category_for_result(r))}</div>{_evidence_details(r)}</td>
+          <td>{_severity_badge(r.get('severity', ''))}</td>
+          <td>{_status_badge(r.get('status', ''))}</td>
           <td class="mono">{_safe(_display_value(r, r.get('expected'), expected=True))}</td>
           <td class="mono">{_safe(_display_value(r, r.get('actual')))}</td>
-          <td><span class="nist-pill">{_safe(r.get('nist',''))}</span></td>
+          <td class="nist-reference">{_safe(r.get('nist', ''))}</td>
         </tr>
         """)
+    if not table_rows:
+        table_rows.append('<tr><td colspan="7">No control results available.</td></tr>')
+
+    if failures:
+        findings_html = f"""
+        <div class="severity-summary" aria-label="Failed controls by severity">
+          <span><strong>{high}</strong> High severity</span>
+          <span><strong>{medium}</strong> Medium severity</span>
+          <span><strong>{low}</strong> Low severity</span>
+        </div>
+        <div class="findings-list">{''.join(_gap_card(r) for r in failures)}</div>
+        """
+    else:
+        findings_html = _all_clear(total if results else 0, errors)
+
+    errors_html = ""
+    if errors:
+        error_items = "".join(f"""
+        <article class="error-item">
+          <div class="error-heading"><span class="control-id">{_safe(r.get('control_id', ''))}</span><h3>{_safe(r.get('title', ''))}</h3></div>
+          <p>{_safe(r.get('notes') or 'Evidence could not be reliably collected or interpreted.')}</p>
+          {_evidence_details(r)}
+        </article>
+        """ for r in error_results)
+        errors_html = f"""
+        <section class="section errors-section" aria-labelledby="errors-title">
+          <div class="section-head"><h2 id="errors-title">Assessment errors</h2><span class="small">{errors} control{'s' if errors != 1 else ''} require review</span></div>
+          {error_items or '<p class="small">Collection details were not provided.</p>'}
+        </section>
+        """
 
     threshold_text = "90%+ Compliant · 70–89.9% Partially compliant · Below 70% Non-compliant"
     weighted_text = "Severity-weighted score: High ×3, Medium ×2, Low ×1; FAIL or ERROR earns 0 weight, and ERROR remains in the weighted score denominator."
+    scope_note = "Read-only collection. No settings were changed on the target." if collector.get("read_only") is True else "Assessment against the configured baseline."
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CyberAssess Compliance Report</title>
-<style>
-:root{{--navy:#0b1f4b;--page:#f6f7fa;--card:#fff;--text:#172033;--muted:#667085;--line:#e2e6ed;--pass:#0f7a55;--pass-soft:#eaf7f1;--fail:#b3261e;--fail-soft:#fceceb;--warn:#a86a00;--warn-soft:#fff4df;--blue:#2f6fed;--blue-soft:#edf3ff;--shadow:0 10px 28px rgba(11,31,75,.07)}}
-*{{box-sizing:border-box}} html{{background:var(--page)}} body{{margin:0;background:linear-gradient(180deg,#f3f5f9 0,var(--page) 420px);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;line-height:1.45}} h1,h2,h3{{font-family:Georgia,"Times New Roman",serif}}
-.report-shell{{width:min(1180px,calc(100% - 36px));margin:34px auto 60px}} .report-header{{position:relative;overflow:hidden;background:linear-gradient(135deg,var(--navy),#123571);color:#fff;border-radius:22px;padding:34px 38px;box-shadow:0 20px 50px rgba(11,31,75,.18)}} .report-header:after{{content:"";position:absolute;width:280px;height:280px;top:-150px;right:-70px;border:1px solid rgba(255,255,255,.15);border-radius:50%}} .eyebrow{{color:#bcd0ff;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}} h1{{position:relative;z-index:1;margin:8px 0 14px;font-size:clamp(30px,4vw,44px);line-height:1.08}} .header-meta{{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:8px}} .chip{{padding:7px 10px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(255,255,255,.08);font-size:12px;color:#eef3ff}}
-.grid-2{{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(420px,1.6fr);gap:20px;margin-top:20px}} .card{{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}} .score-card{{display:flex;align-items:center;justify-content:center;gap:22px;padding:24px;min-height:225px}} .score-ring{{width:160px;height:160px;flex:0 0 auto}} .ring-track,.ring-progress{{fill:none;stroke-width:12}} .ring-track{{stroke:#e7ebf2}} .ring-progress{{stroke-linecap:round;transform:rotate(-90deg);transform-origin:70px 70px}} .ring-number{{fill:var(--text);font-size:21px;font-weight:800}} .ring-label{{fill:var(--muted);font-size:8px;font-weight:800;letter-spacing:.14em}} .verdict{{margin:4px 0 6px;font:700 24px Georgia,serif;white-space:nowrap}} .small{{color:var(--muted);font-size:12px}}
-.metrics{{padding:20px}} .metrics-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}} .metric{{padding:17px;border:1px solid var(--line);border-radius:14px;background:#fbfcfe}} .metric strong{{display:block;font:700 29px Georgia,serif}} .metric.pass strong{{color:var(--pass)}} .metric.fail strong{{color:var(--fail)}} .metric span{{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.07em;text-transform:uppercase}} .method-note{{margin-top:14px;padding:11px 12px;background:#f7f9fc;border-radius:10px;color:var(--muted);font-size:11px}}
-.analytics{{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(360px,1.4fr);gap:20px;margin-top:20px}} .analytics .card{{padding:21px}} .kicker{{color:var(--blue);font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}} .section-title{{margin:4px 0 15px;font-size:24px}} .severity-wrap{{display:flex;align-items:center;gap:22px}} .severity-donut{{width:130px;height:130px}} .donut-track,.donut-segment{{fill:none;stroke-width:13}} .donut-track{{stroke:#edf0f5}} .donut-segment{{transform:rotate(-90deg);transform-origin:60px 60px}} .donut-number{{fill:var(--text);font-size:18px;font-weight:800}} .donut-label{{fill:var(--muted);font-size:7px;font-weight:800}} .legend{{display:grid;gap:9px;min-width:125px}} .legend div{{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);font-size:12px}} .dot{{width:9px;height:9px;border-radius:50%}} .dot.high{{background:var(--fail)}} .dot.medium{{background:var(--warn)}} .dot.low{{background:var(--blue)}} .category-row{{margin-bottom:13px}} .category-meta{{display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px}} .bar-track{{height:8px;background:#e9edf4;border-radius:999px;overflow:hidden}} .bar-fill{{height:100%;background:linear-gradient(90deg,var(--blue),#4e89ff);border-radius:inherit}}
-.section{{margin-top:28px}} .section-head{{display:flex;justify-content:space-between;gap:16px;align-items:end;margin-bottom:13px}} .section-head h2{{margin:0;font-size:27px}} .gaps-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}} .gap-card{{padding:18px;border:1px solid var(--line);border-left:5px solid var(--gap-accent);border-radius:15px;background:var(--card);box-shadow:0 7px 22px rgba(11,31,75,.05);break-inside:avoid}} .gap-top,.gap-heading{{display:flex;align-items:center;gap:8px}} .gap-top{{justify-content:space-between}} .control-id{{font:800 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}} .gap-card h3{{margin:12px 0;font-size:19px;line-height:1.2}} .severity-badge,.status-badge,.nist-pill{{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;font-size:9.5px;font-weight:800;letter-spacing:.05em;white-space:nowrap}} .severity-badge{{padding:5px 8px}} .severity-badge.high{{background:var(--fail-soft);color:var(--fail)}} .severity-badge.medium{{background:var(--warn-soft);color:var(--warn)}} .severity-badge.low{{background:var(--blue-soft);color:var(--blue)}} .status-badge{{min-width:52px;padding:5px 9px}} .status-badge.pass{{background:var(--pass-soft);color:var(--pass)}} .status-badge.fail{{background:var(--fail-soft);color:var(--fail)}} .status-badge.error{{background:var(--warn-soft);color:var(--warn)}} .nist-pill{{padding:5px 8px;border:1px solid #dbe3f2;background:#f7f9fc;color:#41506b}} .comparison-grid{{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}} .comparison-box{{padding:10px;border:1px solid var(--line);border-radius:10px;background:#fafbfc}} .comparison-box.actual{{background:var(--fail-soft);border-color:#f3d4d1}} .comparison-box span{{display:block;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}} .comparison-box strong{{font:700 12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}} .finding-line,.remediation-copy{{font-size:11px;color:#455066;margin-top:9px}} .finding-line strong,.remediation-copy strong{{display:block;color:var(--text);margin-bottom:2px}} .remediation-copy p{{margin:0}} .command-label{{margin:10px 0 5px;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}} .command-block{{margin:0;padding:11px 12px;background:#08152e;color:#dce8ff;border-radius:10px;font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;overflow:auto}}
-.controls-card{{overflow:hidden;background:var(--card);border:1px solid var(--line);border-radius:15px;box-shadow:var(--shadow)}} .table-wrap{{overflow-x:auto}} table{{width:100%;border-collapse:collapse;font-size:11px}} thead{{background:#f7f9fc}} th{{padding:11px 10px;text-align:left;color:#526079;font-size:9px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line)}} td{{padding:10px;vertical-align:top;border-bottom:1px solid #edf0f4}} tbody tr:last-child td{{border-bottom:none}} .row-pass{{background:linear-gradient(90deg,rgba(15,122,85,.035),transparent 35%)}} .row-fail{{background:linear-gradient(90deg,rgba(179,38,30,.035),transparent 35%)}} .row-error{{background:linear-gradient(90deg,rgba(168,106,0,.045),transparent 35%)}} .table-category{{margin-top:2px;color:var(--muted);font-size:9px}} .mono{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}} .footer{{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:24px;padding-top:15px;border-top:1px solid var(--line);font-size:10px;color:var(--muted)}} .footer strong{{color:var(--navy)}} .all-clear{{padding:20px;text-align:center;border:1px solid #cae9dc;border-radius:12px;background:var(--pass-soft);color:var(--pass);font-weight:700}}
-@media(max-width:820px){{.report-shell{{width:min(100% - 20px,760px);margin-top:10px}}.grid-2,.analytics,.gaps-grid{{grid-template-columns:1fr}}.report-header{{padding:26px 22px}}}} @media(max-width:560px){{.score-card{{flex-direction:column;text-align:center}}.metrics-grid,.comparison-grid{{grid-template-columns:1fr}}}}
-@media(prefers-color-scheme:dark){{:root{{--page:#0a1020;--card:#10192c;--text:#eef3ff;--muted:#a7b2c7;--line:#26324a}} body{{background:#0a1020}} .metric,.comparison-box{{background:#10192c}} thead{{background:#162138}} .nist-pill{{border-color:#33415e;background:#18233a;color:#c6d4ef}}}}
-@page{{size:A4;margin:12mm}} @media print{{*{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}} html,body{{background:#fff!important}} .report-shell{{width:100%;margin:0}} .report-header{{padding:18px 22px;border-radius:10px;box-shadow:none}} .card,.controls-card{{box-shadow:none!important}} .score-card{{gap:12px}} .verdict{{font-size:15px}} h1{{font-size:25px}} .grid-2{{grid-template-columns:.8fr 1.4fr;gap:9px;margin-top:9px}} .score-card{{min-height:150px;padding:12px}} .score-ring{{width:100px;height:100px}} .metrics{{padding:11px}} .metric{{padding:9px}} .metric strong{{font-size:21px}} .method-note{{font-size:8px;padding:6px;margin-top:7px}} .analytics{{gap:9px;margin-top:9px}} .analytics .card{{padding:11px}} .severity-donut{{width:88px;height:88px}} .section{{margin-top:14px}} .section-head{{margin-bottom:7px}} .section-head h2{{font-size:19px}} .gaps-grid{{gap:6px}} .gap-card{{padding:9px;border-radius:9px;box-shadow:none;break-inside:avoid;page-break-inside:avoid}} .gap-card h3{{margin:5px 0;font-size:12px}} .comparison-grid{{margin:5px 0;gap:5px}} .comparison-box{{padding:5px}} .finding-line{{font-size:8px;margin-top:4px}} .remediation-copy{{display:none}} .command-label{{margin:5px 0 3px;font-size:7px}} .command-block{{padding:5px 6px;font-size:7px;line-height:1.35}} .controls-section{{break-before:page;page-break-before:always}} table{{font-size:7.6px}} th,td{{padding:5px}} tr,.controls-card,.gap-card{{break-inside:avoid;page-break-inside:avoid}} .footer{{margin-top:9px;padding-top:7px;font-size:7.5px}}}}
-</style>
+<title>CyberAssess Compliance Report · {target}</title>
+<style>{_REPORT_CSS}</style>
 </head>
 <body>
 <main class="report-shell">
   <header class="report-header">
-    <div class="eyebrow">CyberAssess · Live security assessment</div>
+    <div class="masthead"><div class="brand">CyberAssess</div><div class="document-label">Security &amp; compliance assessment</div></div>
     <h1>Compliance &amp; Baseline Report</h1>
-    <div class="header-meta">
-      <span class="chip">Target: <strong>{target}</strong></span>
-      <span class="chip">{platform}</span>
-      <span class="chip">Scan: {scan_date}</span>
-      <span class="chip">{total}-control Ubuntu baseline · NIST SP 800-53 mapped</span>
-    </div>
+    <p class="subtitle">{total}-control Ubuntu baseline · NIST SP 800-53 mapped</p>
+    <dl class="metadata">{metadata_html}</dl>
   </header>
 
-  <section class="grid-2">
-    <div class="card score-card">
-      {_score_ring(score, verdict_color)}
-      <div><div class="kicker">Assessment verdict</div><p class="verdict" style="color:{verdict_color}">{escape(verdict)}</p><div class="small">Weighted compliance score</div></div>
+  <section class="section summary-section" aria-labelledby="summary-title">
+    <div class="section-head"><h2 id="summary-title">Assessment summary</h2><span class="small">Point-in-time baseline review</span></div>
+    <div class="summary-content">
+      <div><div class="score-label">Weighted compliance score</div><div class="score-value">{score:.1f}<span>%</span></div></div>
+      <div class="summary-copy"><div class="verdict">{escape(verdict) if results else 'Not assessed'}</div><p>{summary_text}</p>{error_notice}</div>
     </div>
-    <div class="card metrics">
-      <div class="metrics-grid">
-        <div class="metric pass"><strong>{passed}</strong><span>Passed</span></div>
-        <div class="metric fail"><strong>{failed}</strong><span>Failed</span></div>
-        <div class="metric"><strong>{total}</strong><span>Total controls</span></div>
-      </div>
-      <div class="method-note"><strong>Verdict thresholds:</strong> {escape(threshold_text)}<br><strong>Scoring:</strong> {escape(weighted_text)}<br><strong>Assessment errors:</strong> {errors}</div>
-    </div>
+    <dl class="metrics">
+      <div class="metric"><dt>Passed</dt><dd>{passed}</dd></div>
+      <div class="metric"><dt>Failed</dt><dd>{failed}</dd></div>
+      <div class="metric"><dt>Assessment errors</dt><dd>{errors}</dd></div>
+      <div class="metric"><dt>Total controls</dt><dd>{total}</dd></div>
+    </dl>
+    <details class="methodology">
+      <summary>Scoring methodology &amp; verdict thresholds</summary>
+      <div class="details-body"><p>{escape(threshold_text)}</p><p>{escape(weighted_text)}</p></div>
+    </details>
   </section>
 
-  <section class="analytics">
-    <div class="card"><div class="kicker">Risk distribution</div><h2 class="section-title">Failed controls</h2>{_severity_donut(high, medium, low, total, errors)}</div>
-    <div class="card"><div class="kicker">Coverage</div><h2 class="section-title">Pass rate by category</h2>{_category_bars(results)}</div>
+  <section class="section coverage-section" aria-labelledby="coverage-title">
+    <div class="section-head"><h2 id="coverage-title">Pass rate by category</h2><span class="small">Passed / total controls · unweighted</span></div>
+    <div class="category-grid">{_category_bars(results)}</div>
   </section>
 
-  <section class="section gaps-section" style="{'' if failures else 'display:none'}">
-    <div class="section-head"><div><div class="kicker">Priority remediation</div><h2>Gaps to fix</h2></div><div class="small">Sorted highest risk first</div></div>
-    <div class="gaps-grid">{''.join(_gap_card(r) for r in failures) if failures else _all_clear(total, errors)}</div>
+  <section class="section gaps-section" aria-labelledby="findings-title">
+    <div class="section-head"><h2 id="findings-title">Remediation findings</h2><span class="small">{'Highest severity first' if failures else 'Baseline review'}</span></div>
+    {findings_html}
   </section>
 
-  <section class="section controls-section">
-    <div class="section-head"><div><div class="kicker">Technical detail</div><h2>All controls</h2></div><div class="small">PASS / FAIL / ERROR</div></div>
-    <div class="controls-card"><div class="table-wrap"><table>
-      <thead><tr><th>ID</th><th>Control</th><th>Severity</th><th>Result</th><th>Expected</th><th>Actual</th><th>NIST</th></tr></thead>
+  {errors_html}
+
+  <section class="section controls-section" aria-labelledby="controls-title">
+    <div class="section-head"><h2 id="controls-title">All controls</h2><span class="small">PASS / FAIL / ERROR</span></div>
+    <p class="table-hint" id="table-hint">Scroll horizontally to view all columns.</p>
+    <div class="table-wrap" role="region" aria-labelledby="controls-title" aria-describedby="table-hint" tabindex="0"><table>
+      <caption>Control results and baseline comparison.<span class="screen-only"> Expand Evidence for supporting details.</span></caption>
+      <colgroup><col class="col-id"><col class="col-control"><col class="col-severity"><col class="col-status"><col class="col-expected"><col class="col-actual"><col class="col-nist"></colgroup>
+      <thead><tr><th scope="col">ID</th><th scope="col">Control</th><th scope="col">Severity</th><th scope="col">Result</th><th scope="col">Expected</th><th scope="col">Actual</th><th scope="col">NIST</th></tr></thead>
       <tbody>{''.join(table_rows)}</tbody>
-    </table></div></div>
+    </table></div>
   </section>
 
-  <footer class="footer"><div><strong>CyberAssess</strong> · Automated compliance assessment</div><div>Read-only checks. No settings were changed on the target.</div></footer>
+  <footer class="footer"><div><strong>CyberAssess</strong> · Compliance &amp; baseline assessment</div><div>{scope_note}</div></footer>
 </main>
 </body>
 </html>"""
