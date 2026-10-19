@@ -275,7 +275,9 @@ def _all_clear(total_controls: int, errors: int = 0) -> str:
         state = "complete"
     return (
         f'<div class="assessment-state {state}">'
-        f'<h3>{heading}</h3><p>{description}</p></div>'
+        '<span class="state-symbol" aria-hidden="true">'
+        f'{"✓" if state == "complete" else "!" if state == "incomplete" else "—"}</span>'
+        f'<div><h3>{heading}</h3><p>{description}</p></div></div>'
     )
 
 
@@ -293,8 +295,9 @@ def _category_bars(results: list[dict]) -> str:
     for category, data in categories.items():
         total = data["scoreable"]
         rate = round(data["passed"] / total * 100) if total else 0
+        tone = "complete" if rate == 100 else "partial" if rate else "unmet"
         rows.append(
-            f'<div class="category-row"><div class="category-meta"><span>{_safe(category)}</span>'
+            f'<div class="category-row {tone}"><div class="category-meta"><span>{_safe(category)}</span>'
             f'<span class="category-count">{data["passed"]}/{total} · {rate}%</span></div>'
             f'<div class="bar-track" aria-hidden="true"><div class="bar-fill" '
             f'style="width:{rate}%"></div></div></div>'
@@ -373,8 +376,9 @@ def _gap_card(result: dict, ubuntu: bool = True) -> str:
     remediation = _safe(_evidence_text(result.get("remediation") or "Review the selected baseline and your organization’s security policy.", 1600))
     source_html = f'<p class="collection-note">Source: {_safe(_evidence_text(result["evidence_source"]))}</p>' if result.get("evidence_source") else ""
     control_id = _safe(result.get("control_id", ""))
+    severity_class = {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"}.get(str(result.get("severity", "")).upper(), "neutral")
     return f"""
-    <article class="gap-card">
+    <article class="gap-card severity-{severity_class}">
       <div class="gap-top">
         <div class="gap-heading"><span class="control-id">{control_id}</span>{_severity_badge(result.get('severity', 'LOW'))}</div>
         <span class="nist-reference">NIST {_safe(result.get('nist', ''))}</span>
@@ -401,179 +405,392 @@ def _gap_card(result: dict, ubuntu: bool = True) -> str:
 _REPORT_CSS = """
 :root {
   color-scheme: light;
-  --navy: #0b1f4b;
-  --ink: #202b3b;
-  --muted: #596574;
-  --line: #dce1e6;
-  --surface: #f4f6f8;
-  --pass: #245f4b;
-  --fail: #9b332c;
-  --warn: #775c29;
+  --navy: #122b48;
+  --ink: #25384c;
+  --muted: #576a7e;
+  --line: #dce4ed;
+  --surface: #f3f6fa;
+  --pass: #16704f;
+  --fail: #b1363e;
+  --warn: #926017;
+  --info: #28679b;
+  --shadow: 0 5px 18px rgb(16 35 58 / 5%);
 }
 * { box-sizing: border-box; }
-html { background: #edf0f3; }
+html { background: #e9eef4; scroll-padding-top: 90px; }
 body {
+  display: flow-root;
   margin: 0;
+  min-height: 100vh;
   color: var(--ink);
+  background: linear-gradient(180deg, #142a43 0, #233d57 230px, #dce5ee 500px, #edf1f6 850px);
   font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   -webkit-text-size-adjust: 100%;
 }
 h1, h2, h3, h4, p, dl { margin: 0; }
 h1, h2, h3 { color: var(--navy); }
-h1 { font-size: 30px; font-weight: 600; line-height: 1.25; letter-spacing: -.025em; }
-h2 { font-size: 20px; font-weight: 600; line-height: 1.35; }
-h3 { font-size: 14px; font-weight: 600; }
+h1 { font-size: 34px; font-weight: 650; line-height: 1.2; letter-spacing: -.035em; }
+h2 { font-size: 22px; font-weight: 650; line-height: 1.3; letter-spacing: -.025em; }
+h3 { font-size: 14px; font-weight: 650; }
 h4, dt { color: var(--muted); font-size: 11.5px; font-weight: 600; }
 dd { margin: 0; }
-.report-shell { max-width: 1280px; margin: 36px auto 64px; padding: 30px 40px; background: #fff; border: 1px solid var(--line); }
-.report-header { border-top: 3px solid var(--navy); padding-top: 16px; }
-.masthead { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 28px; }
-.brand { color: var(--navy); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-.document-label, .small { color: var(--muted); font-size: 11.5px; }
-.subtitle { margin-top: 8px; color: var(--muted); font-size: 12px; }
-.metadata { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 22px; margin-top: 22px; padding: 17px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.metadata dt { margin-bottom: 4px; }
-.metadata dd { font-size: 12px; overflow-wrap: anywhere; }
-.sample-notice { margin-top: 10px; color: var(--muted); font-size: 11.5px; }
-.section { margin-top: 28px; }
-.section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+a { color: var(--info); }
+.report-shell { width: calc(100% - 64px); max-width: 1320px; margin: 32px auto 48px; }
+.report-header { padding: 26px 30px 0; overflow: hidden; border: 1px solid #3b526b; border-radius: 16px; background: linear-gradient(115deg, #173553, #0b1c33); box-shadow: 0 12px 28px rgb(5 17 34 / 15%); color: #e5edf5; }
+.masthead { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; }
+.brand { display: inline-flex; gap: 9px; align-items: center; color: #fff; font-size: 17px; font-weight: 650; letter-spacing: -.025em; }
+.brand-mark { width: 23px; height: 25px; color: #b7cce0; }
+.document-label { font-size: 11.5px; color: #b9cadd; }
+.platform-badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid #526980; border-radius: 6px; background: #263f59; color: #edf4fc; font-size: 11.5px; font-weight: 600; }
+.platform-badge svg { width: 16px; height: 16px; flex-shrink: 0; }
+.header-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.report-header h1 { color: #fff; }
+.subtitle { margin-top: 9px; color: #bed0e2; font-size: 12px; }
+.header-target { padding-top: 3px; min-width: 120px; max-width: 260px; text-align: right; }
+.header-target span { display: block; color: #b9cadd; font-size: 11px; margin-bottom: 4px; }
+.header-target strong { color: #fff; font: 600 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.metadata { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 17px 24px; margin-top: 24px; padding: 20px 0 22px; border-top: 1px solid #3e556d; }
+.metadata dt { color: #b9cadd; font-size: 10.5px; margin-bottom: 4px; }
+.metadata dd { color: #f0f4f9; font-size: 11.5px; overflow-wrap: anywhere; }
+.sample-notice { display: flex; gap: 7px; align-items: baseline; margin-top: 15px; color: #e5d2ab; font-size: 11px; }
+.sample-notice::before { content: "i"; display: inline-flex; justify-content: center; align-items: center; width: 13px; height: 13px; flex-shrink: 0; border: 1px solid #b9a583; border-radius: 50%; font-size: 9px; font-weight: 600; }
+.report-nav { position: sticky; top: 12px; z-index: 5; display: flex; align-items: center; gap: 6px; margin: 16px 0 20px; padding: 8px; border: 1px solid #d5e0eb; border-radius: 10px; background: #f9fbfd; box-shadow: 0 4px 14px rgb(15 36 61 / 9%); }
+.nav-label { padding: 0 12px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.report-nav a { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 6px; color: #425c76; font-size: 12px; font-weight: 600; text-decoration: none; }
+.report-nav a:hover { color: var(--navy); background: #e9eff6; }
+.report-nav a:first-of-type { color: #fff; background: var(--navy); }
+.nav-count { min-width: 17px; padding: 0 4px; border: 1px solid #cbd8e5; border-radius: 4px; color: #536d86; font-size: 10px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+.section { min-width: 0; margin-top: 20px; padding: 24px; border: 1px solid var(--line); border-radius: 13px; background: #fff; box-shadow: var(--shadow); }
+.section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 20px; }
 .section-head .small { text-align: right; }
-.summary-content { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; align-items: center; padding: 3px 0 20px; }
-.score-label { color: var(--muted); font-size: 11.5px; }
-.score-value { color: var(--navy); font-size: 36px; font-weight: 600; line-height: 1.2; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.score-value span { margin-left: 2px; font-size: 22px; }
-.verdict { display: inline-block; margin-bottom: 8px; font-size: 16px; font-weight: 600; }
-.summary-copy p { max-width: 65ch; font-size: 12px; color: var(--muted); }
-.summary-copy p + p { margin-top: 6px; }
-.metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--line); padding: 14px 0; }
-.metric { padding: 0 18px; border-left: 1px solid var(--line); }
-.metric:first-child { padding-left: 0; border-left: 0; }
-.metric dt { margin-bottom: 2px; }
-.metric dd { font-size: 22px; line-height: 1.3; font-weight: 500; font-variant-numeric: tabular-nums; }
-.methodology { margin-top: 10px; font-size: 11px; color: var(--muted); }
-.methodology .details-body { padding-top: 8px; }
-.methodology p + p { margin-top: 4px; }
-.category-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 28px; }
-.category-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; font-size: 12px; overflow-wrap: anywhere; }
-.category-count { flex-shrink: 0; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.bar-track { height: 3px; background: #e8ecf0; }
-.bar-fill { height: 100%; background: var(--navy); }
-.severity-summary { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 10px 0; font-size: 11.5px; color: var(--muted); }
-.severity-summary strong { color: var(--ink); font-weight: 600; }
-.gap-card { padding: 15px 0; border-bottom: 1px solid var(--line); }
-.gap-top, .gap-heading { display: flex; align-items: center; gap: 10px; }
+.small { color: var(--muted); font-size: 11.5px; }
+.summary-cards { display: grid; grid-template-columns: 1.2fr 1.45fr repeat(4, minmax(0, 1fr)); gap: 12px; }
+.summary-card { min-width: 0; min-height: 156px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: #fff; box-shadow: 0 3px 9px rgb(20 44 71 / 3%); }
+.score-card { background: #f1f5fa; border-color: #cfdae7; }
+.score-label, .card-label { color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.score-ring { position: relative; display: grid; place-items: center; width: 106px; height: 106px; margin: 11px auto 0; border-radius: 50%; background: conic-gradient(var(--score-tone, var(--info)) var(--score-angle), #dce5ee 0); }
+.score-ring::before { content: ""; position: absolute; inset: 8px; border-radius: 50%; background: #f1f5fa; }
+.score-value { position: relative; color: var(--navy); font-size: 30px; font-weight: 650; line-height: 1.1; letter-spacing: -.05em; font-variant-numeric: tabular-nums; }
+.score-value span { font-size: 14px; margin-left: 2px; letter-spacing: 0; }
+.verdict-card { display: flex; flex-direction: column; align-items: flex-start; background: #f9fbfd; }
+.verdict { display: block; margin-top: 23px; font-size: 20px; font-weight: 650; line-height: 1.25; letter-spacing: -.02em; }
+.verdict-card .card-note { margin-top: auto; padding-top: 12px; }
+.verdict-card.compliant .verdict { color: var(--pass); }
+.verdict-card.partial .verdict { color: var(--warn); }
+.verdict-card.non-compliant .verdict { color: var(--fail); }
+.verdict-card.not-assessed .verdict { color: var(--muted); }
+.metric { display: flex; flex-direction: column; }
+.metric dt { display: flex; align-items: baseline; gap: 6px; }
+.metric dt::before { content: ""; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--info); }
+.metric dd { margin-top: 23px; color: var(--navy); font-size: 32px; font-weight: 600; line-height: 1.15; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.metric-pass dt::before { background: var(--pass); }
+.metric-fail dt::before { background: var(--fail); }
+.metric-error dt::before { background: #b37b26; }
+.metric-pass dd { color: var(--pass); }
+.metric-fail dd { color: var(--fail); }
+.metric-error dd { color: var(--warn); }
+.card-note { margin-top: auto; padding-top: 12px; color: var(--muted); font-size: 10.5px; }
+.summary-content { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-top: 18px; padding: 16px 0 0; border-top: 1px solid var(--line); }
+.summary-copy p { max-width: 82ch; color: var(--muted); font-size: 12px; }
+.summary-copy p + p { margin-top: 5px; }
+.assessed-count { flex-shrink: 0; color: var(--muted); font-size: 11px; text-align: right; }
+.assessed-count strong { display: block; color: var(--navy); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.methodology { position: relative; margin-top: 12px; font-size: 11px; color: var(--muted); }
+.methodology .details-body { padding: 8px 0 0 18px; }
+.methodology p + p { margin-top: 5px; }
+.analytics-grid { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); gap: 20px; }
+.analytics-grid .section { height: auto; }
+.analytics-grid .section-head { align-items: flex-start; gap: 8px; }
+.analytics-grid .section-head h2 { font-size: 20px; }
+.analytics-grid .section-head .small { max-width: 160px; font-size: 10.5px; }
+.category-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 19px 24px; }
+.category-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; font-size: 11.5px; font-weight: 500; overflow-wrap: anywhere; }
+.category-count { flex-shrink: 0; color: var(--muted); font-size: 10.5px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.bar-track { height: 9px; border-radius: 4px; background: #e8edf3; overflow: hidden; }
+.bar-fill { height: 100%; background: #437398; border-radius: 4px; box-shadow: inset 0 1px rgb(255 255 255 / 16%); }
+.category-row.complete .bar-fill { background: #367e65; }
+.category-row.unmet .bar-track { background: #eee5e7; }
+.risk-intro { color: var(--muted); font-size: 11.5px; margin-bottom: 18px; }
+.severity-summary { display: grid; gap: 13px; }
+.severity-stat { display: grid; grid-template-columns: 58px minmax(0, 1fr) 26px; align-items: center; gap: 10px; font-size: 12px; }
+.severity-label { color: var(--muted); font-weight: 500; }
+.risk-track { height: 9px; background: #edf0f4; border-radius: 4px; overflow: hidden; }
+.risk-fill { height: 100%; border-radius: 4px; min-width: 0; }
+.severity-stat.high .risk-fill { background: #b34f55; }
+.severity-stat.medium .risk-fill { background: #b58743; }
+.severity-stat.low .risk-fill { background: #6489a7; }
+.severity-stat strong { text-align: right; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.severity-stat.high strong { color: var(--fail); }
+.severity-stat.medium strong { color: var(--warn); }
+.severity-stat.low strong { color: var(--info); }
+.risk-note { margin-top: 19px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10.5px; }
+.findings-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.gap-card { min-width: 0; padding: 17px; border: 1px solid var(--line); border-left: 3px solid #8294a7; border-radius: 8px; background: #fff; box-shadow: 0 2px 6px rgb(14 37 62 / 3%); }
+.gap-card.severity-high { border-left-color: #b34f55; }
+.gap-card.severity-medium { border-left-color: #b58743; }
+.gap-card.severity-low { border-left-color: #6489a7; }
+.gap-top, .gap-heading { display: flex; align-items: center; gap: 9px; }
 .gap-top { justify-content: space-between; flex-wrap: wrap; }
 .control-id, .mono, .evidence-value, .command-block { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.control-id { font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.nist-reference { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
-.gap-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .7fr); gap: 20px; align-items: start; margin: 6px 0 8px; }
-.comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.comparison dt { font-size: 11.5px; }
-.comparison dd { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-.severity-badge { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .025em; }
-.status-badge { display: inline-block; padding: 2px 6px; border: 1px solid currentColor; border-radius: 2px; font-size: 10.5px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
-.status-badge.pass { color: var(--pass); background: #eef4f0; }
-.status-badge.fail { color: var(--fail); background: #f8eeec; }
-.status-badge.error { color: var(--warn); background: #f6f1e7; }
-.status-badge.neutral { color: var(--muted); }
-summary { position: relative; width: fit-content; max-width: 100%; cursor: pointer; color: var(--muted); font-size: 11.5px; }
-summary::marker { font-size: 8px; }
+.control-id { font-size: 11.5px; font-weight: 600; color: #425c76; }
+.nist-reference { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.gap-summary { margin: 12px 0; }
+.gap-summary h3 { font-size: 14px; line-height: 1.45; }
+.comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 12px; padding: 11px 12px; border: 1px solid #e6ebf1; border-radius: 6px; background: #f5f7fa; }
+.comparison dt { margin-bottom: 4px; font-size: 10.5px; }
+.comparison dd { font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.severity-badge { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: 4px; color: var(--muted); background: #eef2f6; font-size: 9.5px; font-weight: 650; line-height: 1.5; letter-spacing: .025em; }
+.severity-badge.high { color: #9b3038; background: #f8eaec; }
+.severity-badge.medium { color: #815619; background: #f7f0e4; }
+.severity-badge.low { color: #35668b; background: #eaf1f7; }
+.status-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid transparent; border-radius: 4px; font-size: 9.5px; font-weight: 650; line-height: 1.4; white-space: nowrap; }
+.status-badge::before { font-size: 10px; }
+.status-badge.pass { color: #176547; background: #e9f4ee; border-color: #cfe5d9; }
+.status-badge.pass::before { content: "✓"; }
+.status-badge.fail { color: #a3313a; background: #faedef; border-color: #eed7da; }
+.status-badge.fail::before { content: "×"; }
+.status-badge.error { color: #885b17; background: #fbf2e1; border-color: #ecdec1; }
+.status-badge.error::before { content: "!"; }
+.status-badge.neutral { color: var(--muted); background: #eef2f6; }
+summary { position: relative; display: flex; align-items: baseline; gap: 7px; width: fit-content; max-width: 100%; cursor: pointer; color: #43627f; font-size: 11.5px; font-weight: 500; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::marker { content: ""; }
+summary::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 2px; flex-shrink: 0; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+details[open] > summary::before { transform: rotate(45deg); }
 summary:hover { color: var(--navy); }
-summary:focus-visible, .table-wrap:focus-visible { outline: 2px solid var(--navy); outline-offset: 4px; }
-.details-body { padding-top: 8px; }
-.remediation-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; font-size: 11px; }
+a:focus-visible, summary:focus-visible, .table-wrap:focus-visible { outline: 2px solid #286da5; outline-offset: 4px; border-radius: 3px; }
+.details-body { padding-top: 9px; }
+.remediation-details, .evidence-details { position: relative; border: 1px solid #dfe7ef; border-radius: 6px; background: #f5f8fb; }
+.remediation-details > summary, .evidence-details > summary { width: 100%; padding: 8px 10px; font-size: 10.5px; }
+.remediation-details[open] > summary, .evidence-details[open] > summary { border-bottom: 1px solid #dfe7ef; }
+.remediation-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; padding: 11px; font-size: 11px; }
 .remediation-body h4 { margin-bottom: 4px; }
-.evidence-value, .raw-evidence { font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; white-space: pre-wrap; margin: 0; }
-.command-section { grid-column: 1 / -1; }
-.command-block { margin: 0; padding: 10px 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-.assessment-state { padding: 18px 20px; border: 1px solid var(--line); border-left: 3px solid var(--navy); background: #fafbfc; }
+.evidence-value, .raw-evidence { font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; white-space: pre-wrap; margin: 0; }
+.command-section { grid-column: 1 / -1; min-width: 0; }
+.command-block { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 5px; background: #edf2f7; color: #2b465f; font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.assessment-state { display: flex; align-items: center; gap: 15px; padding: 21px; border: 1px solid #d7e2ec; border-radius: 8px; background: #f3f7fb; }
+.assessment-state.complete { border-color: #d0e5d9; background: #f1f8f4; }
+.state-symbol { display: inline-grid; place-items: center; width: 37px; height: 37px; flex-shrink: 0; border: 1px solid #c6d6e4; border-radius: 50%; color: #4e6c86; font-size: 20px; font-weight: 500; }
+.assessment-state.complete .state-symbol { color: var(--pass); border-color: #bcdac9; background: #e5f1e9; }
 .assessment-state.complete h3 { color: var(--pass); }
-.assessment-state p { margin-top: 5px; max-width: 85ch; font-size: 12px; color: var(--muted); }
-.error-item { padding: 12px 0; border-top: 1px solid var(--line); }
-.error-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px; }
-.error-item p { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-.table-wrap { overflow-x: auto; }
-.table-hint { display: none; }
-table { width: 100%; min-width: 1080px; table-layout: fixed; border-collapse: collapse; text-align: left; font-size: 12.5px; }
-caption { padding: 0 0 10px; text-align: left; color: var(--muted); font-size: 10px; }
+.assessment-state.incomplete { border-color: #ead9b7; background: #fbf6ed; }
+.assessment-state.incomplete .state-symbol { color: var(--warn); border-color: #e4ceaa; }
+.assessment-state p { margin-top: 5px; max-width: 90ch; font-size: 12px; color: var(--muted); }
+.errors-section { border-top: 3px solid #b9883c; }
+.error-explainer { display: flex; align-items: flex-start; gap: 11px; margin-bottom: 16px; padding: 12px 14px; border: 1px solid #eadfc9; border-radius: 7px; background: #fbf6ec; color: #725222; font-size: 12px; }
+.error-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.error-item { min-width: 0; padding: 15px; border: 1px solid #eadfc9; border-left: 3px solid #b9883c; border-radius: 7px; background: #fffdf8; }
+.error-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 7px; }
+.error-heading h3 { flex-basis: 100%; margin-top: 2px; }
+.error-item > p { font-size: 12px; color: #725b3b; overflow-wrap: anywhere; }
+.error-item .evidence-details { margin-top: 12px; }
+.table-wrap { overflow: auto; max-height: 780px; border: 1px solid var(--line); border-radius: 8px; }
+.table-hint { margin-bottom: 10px; color: var(--muted); font-size: 10.5px; }
+table { width: 100%; min-width: 1080px; table-layout: fixed; border-collapse: separate; border-spacing: 0; text-align: left; font-size: 12.5px; line-height: 1.5; }
+caption { padding: 11px 13px; text-align: left; color: var(--muted); background: #f8fafc; font-size: 10.5px; border-bottom: 1px solid var(--line); }
 col.col-id { width: 9%; } col.col-category { width: 11%; } col.col-control { width: 26%; } col.col-severity { width: 8%; }
 col.col-status { width: 8%; } col.col-expected { width: 12%; } col.col-actual { width: 15%; } col.col-nist { width: 11%; }
-thead { background: var(--surface); }
-th, td { padding: 10px 8px; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); font-size: 11.5px; font-weight: 600; color: var(--muted); }
-tbody th { font-size: 11.5px; font-weight: 500; }
-.control-title { font-weight: 600; line-height: 1.45; }
-.table-category { color: var(--muted); font-size: 11.5px; }
-.evidence-details { margin-top: 6px; }
-.evidence-details .details-body { display: grid; gap: 8px; font-size: 11.5px; }
+thead { background: #eaf0f6; }
+th, td { padding: 12px 9px; vertical-align: top; border-bottom: 1px solid #e1e7ef; overflow-wrap: anywhere; }
+thead th { position: sticky; top: 0; z-index: 2; padding-top: 11px; padding-bottom: 11px; background: #eaf0f6; box-shadow: 0 1px #cad7e4; font-size: 10.5px; font-weight: 650; color: #3c5671; }
+tbody tr:nth-child(even) { background: #f8fafd; }
+tbody tr:hover { background: #f0f5fa; }
+tbody tr:last-child > * { border-bottom: 0; }
+tbody th { font-size: 11px; font-weight: 600; color: #425c76; }
+.control-title { font-weight: 600; line-height: 1.45; color: #263d54; }
+.table-category { color: #536b82; font-size: 11px; font-weight: 500; }
+.category-tag { display: inline-block; padding: 2px 6px; border: 1px solid #dde5ed; border-radius: 4px; background: #f0f4f8; font-size: 10px; line-height: 1.5; }
+.table-wrap td.mono { font-size: 11px; }
+.evidence-details { margin-top: 9px; }
+.evidence-details .details-body { display: grid; gap: 9px; padding: 10px; font-size: 11px; }
+.evidence-details h4 { margin-bottom: 3px; font-size: 10.5px; }
 .collection-note { margin-top: 6px; color: var(--muted); }
-.footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 20px; margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
-.footer-statement { flex-basis: 100%; }
+.footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 20px; margin-top: 22px; padding: 0 3px; color: #566b80; font-size: 10.5px; }
+.footer-statement { flex-basis: 100%; margin-top: 4px; }
 .print-evidence-section { display: none; }
 .footer strong { color: var(--navy); font-weight: 600; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-@media screen and (max-width: 1340px) {
-  .report-shell { margin: 24px; }
+@media screen and (max-width: 1160px) {
+  .report-shell { width: calc(100% - 40px); margin-top: 20px; }
+  .summary-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .score-card, .verdict-card { grid-column: span 2; min-height: 145px; }
+  .score-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .score-ring { margin: 0; flex-shrink: 0; }
+  .verdict-card .verdict { margin-top: 15px; }
+  .metric { min-height: 134px; }
+  .metric dd { margin-top: 14px; }
+  .analytics-grid { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+  .analytics-grid .section-head { flex-direction: column; }
+  .analytics-grid .section-head .small { text-align: left; max-width: none; }
+  .findings-list, .error-list { grid-template-columns: 1fr; }
+  .gap-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .9fr); gap: 20px; align-items: center; }
+  .comparison { margin-top: 0; }
 }
 @media screen and (max-width: 800px) {
-  .report-shell { margin: 16px; padding: 24px; }
-  .metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metrics { gap: 14px 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .metric:nth-child(4) { padding-left: 0; border-left: 0; }
-  .summary-content { grid-template-columns: 150px minmax(0, 1fr); gap: 20px; }
-  .gap-summary { grid-template-columns: 1fr; gap: 8px; }
-  .table-hint { display: block; margin-bottom: 8px; color: var(--muted); font-size: 10px; }
+  .report-header { padding: 23px 24px 0; }
+  h1 { font-size: 30px; }
+  .header-title-row { display: block; }
+  .header-target { display: none; }
+  .metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 22px; }
+  .section { padding: 22px; }
+  .summary-content { gap: 18px; }
+  .analytics-grid { grid-template-columns: 1fr; gap: 0; }
+  .analytics-grid .section-head { flex-direction: row; }
+  .analytics-grid .section-head .small { max-width: 160px; text-align: right; }
+  .severity-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .severity-stat { grid-template-columns: 1fr auto; gap: 8px; }
+  .severity-stat .risk-track { order: 3; grid-column: 1 / -1; }
+  .risk-intro { margin-bottom: 12px; }
+  .risk-note { margin-top: 14px; }
+  .gap-summary { grid-template-columns: 1fr; gap: 11px; }
+  .report-nav { top: 8px; }
 }
 @media screen and (max-width: 480px) {
-  .report-shell { margin: 0; padding: 20px 16px; border: 0; }
-  h1 { font-size: 24px; }
-  .masthead { flex-direction: column; gap: 4px; margin-bottom: 22px; }
-  .section-head { align-items: start; flex-direction: column; gap: 4px; }
-  .section-head .small { text-align: left; }
-  .summary-content { grid-template-columns: 1fr; gap: 14px; }
-  .score-value { font-size: 36px; }
-  .metrics { gap: 14px 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric:nth-child(3) { padding-left: 0; border-left: 0; }
-  .metric:nth-child(4) { padding-left: 18px; border-left: 1px solid var(--line); }
-  .metric:nth-child(5) { padding-left: 0; border-left: 0; }
+  html { scroll-padding-top: 78px; }
+  .report-shell { width: calc(100% - 24px); margin: 12px auto 26px; }
+  .report-header { padding: 19px 17px 0; border-radius: 12px; }
+  .masthead { gap: 8px; margin-bottom: 21px; }
+  .brand { font-size: 16px; gap: 7px; }
+  .brand-mark { width: 20px; }
+  .platform-badge { font-size: 10px; padding: 6px 8px; gap: 6px; }
+  h1 { font-size: 28px; }
+  h2 { font-size: 21px; }
+  .subtitle { font-size: 11.5px; line-height: 1.6; }
+  .metadata { gap: 15px 14px; margin-top: 19px; padding: 17px 0; }
+  .metadata dt { font-size: 10px; }
+  .metadata dd { font-size: 11px; }
+  .sample-notice { align-items: baseline; font-size: 10.5px; line-height: 1.5; }
+  .report-nav { gap: 3px; padding: 6px; margin: 12px 0 14px; border-radius: 8px; }
+  .nav-label { display: none; }
+  .report-nav a { justify-content: center; gap: 4px; padding: 7px; font-size: 10.5px; flex: 1; }
+  .nav-count { display: none; }
+  .section { padding: 18px 15px; margin-top: 14px; border-radius: 10px; }
+  .section-head, .analytics-grid .section-head { align-items: flex-start; flex-direction: column; gap: 5px; margin-bottom: 16px; }
+  .section-head .small, .analytics-grid .section-head .small { max-width: none; text-align: left; font-size: 10.5px; }
+  .summary-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .summary-card { padding: 13px; }
+  .score-card, .verdict-card { grid-column: span 2; min-height: 126px; }
+  .score-card { padding: 15px 19px; }
+  .score-label { max-width: 90px; font-size: 13px; }
+  .score-ring { width: 94px; height: 94px; }
+  .score-value { font-size: 29px; }
+  .verdict-card { min-height: 116px; }
+  .verdict-card .verdict { margin-top: 9px; }
+  .verdict-card .card-note { padding-top: 9px; }
+  .metric { min-height: 128px; }
+  .metric dd { font-size: 30px; }
+  .card-note { font-size: 10px; }
+  .summary-content { flex-direction: column; gap: 12px; margin-top: 15px; padding-top: 13px; }
+  .assessed-count { display: flex; align-items: baseline; gap: 8px; text-align: left; }
+  .assessed-count strong { display: inline; order: -1; }
   .category-grid, .remediation-body { grid-template-columns: 1fr; }
-  .comparison { gap: 12px; }
+  .category-grid { gap: 17px; }
+  .category-meta { font-size: 11.5px; }
+  .severity-summary { gap: 12px; }
+  .severity-stat { font-size: 11px; }
+  .severity-stat strong { font-size: 16px; }
+  .gap-card, .error-item { padding: 13px; }
+  .gap-top { gap: 7px; }
+  .gap-heading { gap: 7px; }
+  .comparison { gap: 12px; padding: 10px; }
+  .comparison dd { font-size: 11px; }
+  .assessment-state { padding: 15px; align-items: flex-start; gap: 10px; }
+  .state-symbol { width: 29px; height: 29px; font-size: 17px; }
+  .error-explainer { gap: 8px; padding: 11px; font-size: 11px; }
+  .error-explainer .status-badge { flex-shrink: 0; }
 }
 @page { size: A4 portrait; margin: 14mm 12mm; }
 @media print {
   html, body { background: #fff; }
   body { font-size: 9pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .report-shell { max-width: none; margin: 0; padding: 0; border: 0; }
-  .report-header { padding-top: 10px; }
+  .report-shell { width: auto; max-width: none; margin: 0; padding: 0; border: 0; }
+  .report-header { padding: 10px 0 0; border: 0; border-top: 3px solid var(--navy); border-radius: 0; background: #fff; color: var(--ink); box-shadow: none; }
+  .report-header h1, .brand { color: var(--navy); }
   .masthead { margin-bottom: 16px; }
+  .brand { font-size: 11pt; }
+  .brand-mark { width: 18px; height: 19px; color: var(--navy); }
+  .platform-badge { color: var(--navy); border-color: var(--line); background: #f3f6fa; padding: 4px 7px; font-size: 7pt; }
+  .header-target { display: none; }
+  .report-nav { display: none; }
   h1 { font-size: 21pt; } h2 { font-size: 12pt; } h3 { font-size: 10pt; }
-  .metadata { gap: 10px 16px; margin-top: 14px; padding: 12px 0; }
-  .metadata dt, h4 { font-size: 7pt; } .metadata dd { font-size: 8pt; }
-  .section { margin-top: 18px; }
+  .subtitle { color: var(--muted); font-size: 8pt; }
+  .metadata { gap: 10px 16px; margin-top: 14px; padding: 12px 0; border-color: var(--line); border-bottom: 1px solid var(--line); }
+  .metadata dt, h4 { color: var(--muted); font-size: 7pt; } .metadata dd { color: var(--ink); font-size: 8pt; }
+  .sample-notice { color: #725222; font-size: 7pt; margin-top: 8px; }
+  .section { margin-top: 18px; padding: 0; border: 0; border-radius: 0; background: #fff; box-shadow: none; }
   .section-head { margin-bottom: 10px; break-after: avoid; }
-  .summary-content { grid-template-columns: 140px minmax(0, 1fr); gap: 20px; padding-bottom: 12px; }
-  .score-value { font-size: 30pt; } .verdict { font-size: 12pt; }
+  .section-head .small { font-size: 7pt; }
+  .summary-cards { grid-template-columns: 1.25fr 1.45fr repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .summary-card { padding: 8px; min-height: 100px; border-radius: 4px; box-shadow: none; }
+  .score-label, .card-label, .metric dt { font-size: 7pt; }
+  .score-ring { width: 67px; height: 67px; margin-top: 6px; border: 5px solid #d6e1ea; background: none; }
+  .score-ring::before { display: none; }
+  .score-value { font-size: 18pt; } .score-value span { font-size: 9pt; }
+  .verdict { margin-top: 14px; font-size: 10pt; }
+  .metric dd { margin-top: 14px; font-size: 20pt; }
+  .card-note { font-size: 6pt; padding-top: 8px; }
+  .summary-content { margin-top: 10px; padding-top: 9px; gap: 16px; }
   .summary-copy p, .assessment-state p { font-size: 8pt; }
-  .metrics { padding: 10px 0; } .metric dd { font-size: 16pt; }
-  .category-grid { gap: 12px 20px; }
+  .assessed-count { font-size: 7pt; }
+  .assessed-count strong { font-size: 11pt; }
+  .methodology { margin-top: 8px; font-size: 7pt; }
+  .analytics-grid { grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); gap: 20px; }
+  .analytics-grid .section-head h2 { font-size: 12pt; }
+  .analytics-grid .section-head { display: block; }
+  .analytics-grid .section-head .small { display: block; text-align: left; font-size: 6.5pt; max-width: none; }
+  .category-grid { gap: 10px 16px; }
+  .category-meta { font-size: 7pt; margin-bottom: 4px; }
+  .category-count { font-size: 6.5pt; }
+  .bar-track, .risk-track { height: 5px; }
+  .bar-fill { box-shadow: none; }
+  .risk-intro { margin-bottom: 10px; font-size: 7pt; }
+  .severity-summary { gap: 8px; }
+  .severity-stat { grid-template-columns: 36px minmax(0, 1fr) 18px; gap: 7px; font-size: 7pt; }
+  .severity-stat strong { font-size: 10pt; }
+  .risk-note { margin-top: 10px; padding-top: 7px; font-size: 6.5pt; }
+  .no-results .risk-intro { margin-bottom: 6px; }
+  .no-results .severity-summary { display: flex; gap: 14px; }
+  .no-results .severity-stat { display: flex; flex: 1; justify-content: space-between; }
+  .no-results .risk-track { display: none; }
+  .no-results .risk-note { margin-top: 6px; padding-top: 6px; }
   .category-row, .assessment-state, .gap-card, .error-item { break-inside: avoid; page-break-inside: avoid; }
-  .gap-card { padding: 12px 0; }
-  .gap-summary { grid-template-columns: minmax(0, 1fr) minmax(180px, .7fr); gap: 16px; }
+  .findings-list, .error-list { display: block; }
+  .gap-card { margin-top: 8px; padding: 10px 12px; box-shadow: none; border-radius: 4px; }
+  .gap-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .8fr); gap: 16px; margin: 7px 0 0; align-items: center; }
+  .gap-summary h3 { font-size: 9pt; }
+  .comparison { margin-top: 0; padding: 7px 9px; gap: 12px; }
+  .comparison dt { font-size: 6.5pt; }
+  .comparison dd { font-size: 7pt; }
+  .assessment-state { padding: 13px; border-radius: 4px; }
+  .state-symbol { width: 29px; height: 29px; font-size: 16px; }
+  .error-explainer { margin-bottom: 10px; padding: 9px 11px; font-size: 7.5pt; }
+  .error-item { margin-top: 8px; padding: 9px 12px; }
+  .error-item > p { font-size: 8pt; }
+  .error-heading { margin-bottom: 4px; }
+  .error-heading h3 { flex-basis: auto; font-size: 9pt; margin: 0; }
   .remediation-body { font-size: 8pt; }
   .command-block, .evidence-value, .raw-evidence { font-size: 7pt; }
   details > .details-body { display: block !important; }
   details::details-content { content-visibility: visible !important; display: block !important; }
-  summary { font-size: 7pt; cursor: default; } summary::marker { content: ""; }
-  .table-wrap { overflow: visible; }
+  summary { font-size: 7pt; cursor: default; } summary::before { display: none; }
+  .table-wrap { overflow: visible; max-height: none; border: 0; border-radius: 0; }
   .screen-only { display: none; }
-  table { min-width: 0; font-size: 7.5pt; line-height: 1.4; }
+  .table-hint { display: none; }
+  table { min-width: 0; border-collapse: collapse; font-size: 7.5pt; line-height: 1.4; }
+  col.col-id { width: 10.5%; } col.col-nist { width: 9.5%; }
+  caption { padding: 0 0 8px; font-size: 7pt; background: none; border: 0; }
   .evidence-details, .remediation-details { display: none !important; }
   thead { display: table-header-group; }
   tr { break-inside: avoid; page-break-inside: avoid; }
   th, td { padding: 7px 5px; }
-  thead th { position: static; }
+  thead th { position: static; box-shadow: none; }
   thead th, tbody th, .severity-badge, .status-badge, .nist-reference, .table-category { font-size: 6.5pt; }
+  .status-badge { padding: 2px 4px; gap: 2px; }
+  .status-badge::before { font-size: 7px; }
+  .severity-badge { padding: 2px 4px; }
+  .category-tag { font-size: 6pt; padding: 1px 3px; }
+  .table-wrap td.mono { font-size: 7pt; }
+  .control-title { font-size: 7.5pt; }
   .print-evidence-section { display: block; }
   .print-evidence-article { padding: 10px 0; border-top: 1px solid var(--line); break-inside: avoid; page-break-inside: avoid; font-size: 8pt; line-height: 1.4; }
   .print-evidence-heading { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
@@ -623,6 +840,11 @@ def render_html(report: dict) -> str:
         timestamp_label = "Assessment time"
         timestamp = "Not recorded"
     verdict, _ = _verdict(score)
+    verdict_class = {
+        "Compliant": "compliant", "Partially compliant": "partial", "Non-compliant": "non-compliant"
+    }.get(verdict, "not-assessed") if results else "not-assessed"
+    score_tone = {"compliant": "var(--pass)", "partial": "var(--warn)", "non-compliant": "var(--fail)"}.get(verdict_class, "var(--muted)")
+    score_angle = min(100.0, max(0.0, score)) * 3.6
 
     severity_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     failures = [r for r in results if str(r.get("status", "")).upper() == "FAIL"]
@@ -631,6 +853,13 @@ def render_html(report: dict) -> str:
     medium = sum(str(r.get("severity", "")).upper() == "MEDIUM" for r in failures)
     low = sum(str(r.get("severity", "")).upper() == "LOW" for r in failures)
     error_results = [r for r in results if str(r.get("status", "")).upper() == "ERROR"]
+    failure_count = len(failures)
+    risk_bars = "".join(
+        f'<div class="severity-stat {tone}"><span class="severity-label">{label}</span>'
+        f'<div class="risk-track" aria-hidden="true"><div class="risk-fill" style="width:{count / failure_count * 100 if failure_count else 0:.1f}%"></div></div>'
+        f'<strong>{count}</strong></div>'
+        for tone, label, count in (("high", "High", high), ("medium", "Medium", medium), ("low", "Low", low))
+    )
 
     metadata = [
         ("Target", target),
@@ -668,7 +897,7 @@ def render_html(report: dict) -> str:
         table_rows.append(f"""
         <tr>
           <th scope="row" class="mono">{_safe(r.get('control_id', ''))}</th>
-          <td class="table-category">{_safe(_category_for_result(r))}</td>
+          <td class="table-category"><span class="category-tag">{_safe(_category_for_result(r))}</span></td>
           <td><div class="control-title">{_safe(r.get('title', ''))}</div>{_evidence_details(r, ubuntu)}</td>
           <td>{_severity_badge(r.get('severity', ''))}</td>
           <td>{_status_badge(r.get('status', ''))}</td>
@@ -691,7 +920,7 @@ def render_html(report: dict) -> str:
     if errors:
         error_items = "".join(f"""
         <article class="error-item">
-          <div class="error-heading"><span class="control-id">{_safe(r.get('control_id', ''))}</span><h3>{_safe(r.get('title', ''))}</h3></div>
+          <div class="error-heading"><span class="control-id">{_safe(r.get('control_id', ''))}</span>{_status_badge('ERROR')}<h3>{_safe(r.get('title', ''))}</h3></div>
           <p>{_safe(_evidence_text(r.get('notes') or 'Evidence could not be reliably collected or interpreted.'))}</p>
           {_evidence_details(r, ubuntu)}
         </article>
@@ -699,7 +928,8 @@ def render_html(report: dict) -> str:
         errors_html = f"""
         <section class="section errors-section" aria-labelledby="errors-title">
           <div class="section-head"><h2 id="errors-title">Assessment errors</h2><span class="small">{errors} control{'s require' if errors != 1 else ' requires'} review</span></div>
-          {error_items or '<p class="small">Collection details were not provided.</p>'}
+          <div class="error-explainer">{_status_badge('ERROR')}<p>These controls were not assessed because evidence was unavailable or could not be reliably interpreted. ERROR indicates a collection or interpretation issue, not a confirmed insecure setting.</p></div>
+          <div class="error-list">{error_items or '<p class="small">Collection details were not provided.</p>'}</div>
         </section>
         """
 
@@ -707,6 +937,7 @@ def render_html(report: dict) -> str:
     weighted_text = "Severity-weighted score: High ×3, Medium ×2, Low ×1; FAIL or ERROR earns 0 weight, and ERROR remains in the weighted score denominator."
     scope_note = "CyberAssess performs read-only baseline assessment and does not automatically modify target security settings."
     sample_notice = '<p class="sample-notice">Demonstration data · illustrative results, not a live device assessment.</p>' if mode.lower() == "demo" else ""
+    errors_nav = f'<a href="#errors-title">Errors<span class="nav-count">{errors}</span></a>' if errors else ""
     print_evidence = f"""
     <section class="section print-evidence-section" aria-labelledby="print-evidence-title">
       <div class="section-head"><h2 id="print-evidence-title">Control evidence &amp; guidance</h2><span class="small">Technical reference · commands are display-only</span></div>
@@ -723,31 +954,44 @@ def render_html(report: dict) -> str:
 <style>{_REPORT_CSS}</style>
 </head>
 <body>
-<main class="report-shell">
+<main class="report-shell{' no-results' if not results else ''}">
   <header class="report-header">
-    <div class="masthead"><div class="brand">CyberAssess</div><div class="document-label">Security &amp; compliance assessment</div></div>
-    <h1>Compliance &amp; Baseline Report</h1>
-    <p class="subtitle">{_safe(profile_label)} · mapped to relevant NIST SP 800-53 controls</p>
+    <div class="masthead">
+      <div class="brand"><svg class="brand-mark" viewBox="0 0 24 27" fill="none" aria-hidden="true"><path d="M12 2 22 6v7c0 6-5 10-10 12C7 23 2 19 2 13V6l10-4Z" stroke="currentColor" stroke-width="1.7"/><path d="m7.5 13 3 3 6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>CyberAssess</div>
+      <span class="platform-badge"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="3" width="15" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 17h6m-3-3v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>{platform}</span>
+    </div>
+    <div class="header-title-row">
+      <div><h1>Compliance &amp; Baseline Report</h1><p class="subtitle">{_safe(profile_label)} · mapped to relevant NIST SP 800-53 controls</p></div>
+      <div class="header-target"><span>Assessment target</span><strong>{target}</strong></div>
+    </div>
     {sample_notice}
     <dl class="metadata">{metadata_html}</dl>
   </header>
 
+  <nav class="report-nav screen-only" aria-label="Report sections">
+    <span class="nav-label">Report</span>
+    <a href="#summary-title">Summary</a>
+    <a href="#findings-title">Findings<span class="nav-count">{failed}</span></a>
+    {errors_nav}
+    <a href="#controls-title">All Controls<span class="nav-count">{total}</span></a>
+  </nav>
+
   <section class="section summary-section" aria-labelledby="summary-title">
     <div class="section-head"><h2 id="summary-title">Assessment summary</h2><span class="small">Point-in-time baseline review</span></div>
-    <div class="summary-content">
-      <div><div class="score-label">Weighted compliance score</div><div class="score-value">{score:.1f}<span>%</span></div></div>
-      <div class="summary-copy"><div class="verdict">{escape(verdict) if results else 'Not assessed'}</div><p>{summary_text}</p>{error_notice}</div>
+    <div class="summary-cards">
+      <div class="summary-card score-card">
+        <div class="score-label">Weighted compliance score</div>
+        <div class="score-ring" style="--score-angle:{score_angle:.1f}deg;--score-tone:{score_tone}" role="img" aria-label="Weighted compliance score: {score:.1f}%"><div class="score-value" aria-hidden="true">{score:.1f}<span>%</span></div></div>
+      </div>
+      <div class="summary-card verdict-card {verdict_class}"><div class="card-label">Verdict</div><div class="verdict">{escape(verdict) if results else 'Not assessed'}</div><p class="card-note">Severity-weighted baseline result</p></div>
+      <div class="summary-card metric metric-pass"><dl><dt>Passed</dt><dd>{passed}</dd></dl><p class="card-note">Baseline met</p></div>
+      <div class="summary-card metric metric-fail"><dl><dt>Failed</dt><dd>{failed}</dd></dl><p class="card-note">Remediation needed</p></div>
+      <div class="summary-card metric metric-error"><dl><dt>Errors / unavailable</dt><dd>{errors}</dd></dl><p class="card-note">Not assessed</p></div>
+      <div class="summary-card metric"><dl><dt>Total controls</dt><dd>{total}</dd></dl><p class="card-note">Selected baseline</p></div>
     </div>
-    <dl class="metrics">
-      <div class="metric"><dt>Passed</dt><dd>{passed}</dd></div>
-      <div class="metric"><dt>Failed</dt><dd>{failed}</dd></div>
-      <div class="metric"><dt>Errors / unavailable</dt><dd>{errors}</dd></div>
-      <div class="metric"><dt>Assessed (PASS + FAIL)</dt><dd>{passed + failed}</dd></div>
-      <div class="metric"><dt>Total controls</dt><dd>{total}</dd></div>
-    </dl>
-    <div class="severity-summary" aria-label="Failed controls by severity">
-      <span>Failed controls by severity</span>
-      <span><strong>{high}</strong> High</span><span><strong>{medium}</strong> Medium</span><span><strong>{low}</strong> Low</span>
+    <div class="summary-content">
+      <div class="summary-copy"><p>{summary_text}</p>{error_notice}</div>
+      <div class="assessed-count">Assessed (PASS + FAIL)<strong>{passed + failed} / {total}</strong></div>
     </div>
     <details class="methodology">
       <summary>Scoring methodology &amp; verdict thresholds</summary>
@@ -755,10 +999,18 @@ def render_html(report: dict) -> str:
     </details>
   </section>
 
-  <section class="section coverage-section" aria-labelledby="coverage-title">
-    <div class="section-head"><h2 id="coverage-title">Pass rate by category</h2><span class="small">Passed / total controls · unweighted</span></div>
-    <div class="category-grid">{_category_bars(results)}</div>
-  </section>
+  <div class="analytics-grid">
+    <section class="section coverage-section" aria-labelledby="coverage-title">
+      <div class="section-head"><h2 id="coverage-title">Pass rate by category</h2><span class="small">Passed / total controls · unweighted</span></div>
+      <div class="category-grid">{_category_bars(results)}</div>
+    </section>
+    <section class="section risk-section" aria-labelledby="risk-title">
+      <div class="section-head"><h2 id="risk-title">Risk summary</h2><span class="small">Failed controls only</span></div>
+      <p class="risk-intro">Prioritize confirmed baseline gaps by severity.</p>
+      <div class="severity-summary" aria-label="Failed controls by severity">{risk_bars}</div>
+      <p class="risk-note">ERROR controls are shown separately as unavailable evidence.</p>
+    </section>
+  </div>
 
   <section class="section gaps-section" aria-labelledby="findings-title">
     <div class="section-head"><h2 id="findings-title">Remediation findings</h2><span class="small">{'Highest severity first' if failures else 'Baseline review'}</span></div>
