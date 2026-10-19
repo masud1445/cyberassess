@@ -1,0 +1,26 @@
+{
+  "target_name": "demo-macos-workstation",
+  "platform": "macOS",
+  "collector": {
+    "method": "sample data",
+    "mode": "demo",
+    "profile": "macos",
+    "read_only": true,
+    "scope": "Synthetic sample evidence only; no Mac was contacted or assessed.",
+    "limitations": "Preference checks reflect explicit keys only, not effective MDM policy. Current-user checks do not represent all users."
+  },
+  "evidence": {
+    "filevault": {"enabled": true, "_collection_ok": true, "_raw": "filevault.enabled=true; synthetic sample"},
+    "application_firewall": {"enabled": false, "_collection_ok": true, "_raw": "application_firewall.enabled=false; synthetic sample"},
+    "system_integrity": {"enabled": true, "_collection_ok": true, "_raw": "system_integrity.enabled=true; synthetic sample"},
+    "gatekeeper": {"enabled": true, "_collection_ok": true, "_raw": "gatekeeper.enabled=true; synthetic sample"},
+    "update_check": {"enabled": true, "_collection_ok": true, "_raw": "update_check.enabled=true; synthetic explicit preference; effective MDM policy is not verified"},
+    "update_download": {"enabled": false, "_collection_ok": true, "_raw": "update_download.enabled=false; synthetic explicit preference; effective MDM policy is not verified"},
+    "security_updates": {"enabled": true, "_collection_ok": true, "_raw": "security_updates.enabled=true; synthetic explicit preference; effective MDM policy is not verified"},
+    "system_data_updates": {"enabled": null, "_collection_ok": false, "_raw": "Unavailable: explicit preference could not be read; synthetic example, no default was inferred."},
+    "remote_login": {"enabled": false, "_collection_ok": true, "_raw": "remote_login.enabled=false; synthetic sample"},
+    "screen_lock": {"password_required": true, "_collection_ok": true, "_raw": "screen_lock.password_required=true; synthetic invoking-user preference; effective policy is not verified"},
+    "screen_lock_delay": {"seconds": 60, "_collection_ok": true, "_raw": "screen_lock_delay.seconds=60; synthetic invoking-user preference; effective policy is not verified"},
+    "network_time": {"enabled": null, "_collection_ok": false, "_raw": "Unavailable: native query requires additional local privileges; synthetic example."}
+  }
+}

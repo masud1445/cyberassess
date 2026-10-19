@@ -1,0 +1,49 @@
+{
+  "defender": {
+    "antivirus_enabled": true,
+    "realtime_enabled": true
+  },
+  "firewall": {
+    "profiles": [
+      {
+        "name": "Domain",
+        "enabled": "True"
+      },
+      {
+        "name": "Private",
+        "enabled": "True"
+      },
+      {
+        "name": "Public",
+        "enabled": "True"
+      }
+    ]
+  },
+  "bitlocker": {
+    "protection_status": "On"
+  },
+  "rdp": {
+    "deny_connections": 1
+  },
+  "rdp_nla": {
+    "user_authentication": 1
+  },
+  "guest": {
+    "enabled": false
+  },
+  "uac": {
+    "enable_lua": 1
+  },
+  "smb": {
+    "smb1_enabled": false
+  },
+  "inactivity": {
+    "timeout_seconds": 900
+  },
+  "secure_boot": {
+    "enabled": true
+  },
+  "eventlog": {
+    "status": "Running"
+  }
+}

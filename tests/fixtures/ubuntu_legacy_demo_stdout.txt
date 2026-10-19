@@ -1,0 +1,27 @@
+
+CyberAssess Live Assessment
+===========================
+Target: demo-host
+Score:  54.3%
+Passed: 7
+Failed: 8
+Errors: 0
+
+[FAIL ] SSH-001  Disable direct SSH root login
+[PASS ] SSH-002  Disable SSH password authentication
+[FAIL ] SSH-003  Limit SSH MaxAuthTries to 4 or lower
+[FAIL ] SSH-004  Disable SSH X11 forwarding
+[FAIL ] SSH-005  Configure SSH idle timeout
+[FAIL ] NET-001  Host firewall is active
+[PASS ] FILE-001  /etc/shadow permissions are 640 or stricter
+[PASS ] FILE-002  /etc/passwd permissions are 644 or stricter
+[PASS ] AUTH-001  No local accounts have an empty password field
+[PASS ] AUTH-002  Only root has UID 0
+[FAIL ] AUTH-003  Minimum password length is 14 or more
+[FAIL ] LOG-001  Audit service is active
+[PASS ] UPD-001  Automatic security updates are enabled
+[FAIL ] TIME-001  Time synchronization is active
+[PASS ] SVC-001  Telnet server is not installed
+
+JSON report: <generated path>
+HTML report: <generated path>

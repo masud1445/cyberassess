@@ -1,0 +1,71 @@
+{
+  "target_name": "SAMPLE-WINDOWS-HOST",
+  "platform": "Windows",
+  "collector": {
+    "method": "sample data",
+    "mode": "demo",
+    "profile": "windows",
+    "profile_version": "1",
+    "sample_data": true,
+    "read_only": true,
+    "scope": "Synthetic Windows evidence for demonstration only; no live collection performed"
+  },
+  "evidence": {
+    "defender": {
+      "antivirus_enabled": true,
+      "realtime_enabled": false,
+      "_collection_ok": true,
+      "_raw": "{\"antivirus_enabled\": true, \"realtime_enabled\": false}"
+    },
+    "firewall": {
+      "all_profiles_enabled": true,
+      "_collection_ok": true,
+      "_raw": "{\"Domain\": true, \"Private\": true, \"Public\": true}"
+    },
+    "bitlocker": {
+      "protection_enabled": true,
+      "_collection_ok": true,
+      "_raw": "{\"protection_status\": \"On\"}"
+    },
+    "rdp": {
+      "disabled": false,
+      "_collection_ok": true,
+      "_raw": "{\"deny_connections\": 0}"
+    },
+    "rdp_nla": {
+      "required": true,
+      "_collection_ok": true,
+      "_raw": "{\"user_authentication\": 1}"
+    },
+    "guest": {
+      "disabled": true,
+      "_collection_ok": true,
+      "_raw": "{\"enabled\": false}"
+    },
+    "uac": {
+      "enabled": true,
+      "_collection_ok": true,
+      "_raw": "{\"enable_lua\": 1}"
+    },
+    "smb": {
+      "smb1_disabled": true,
+      "_collection_ok": true,
+      "_raw": "{\"smb1_enabled\": false}"
+    },
+    "inactivity": {
+      "timeout_seconds": 1800,
+      "_collection_ok": true,
+      "_raw": "{\"timeout_seconds\": 1800}"
+    },
+    "secure_boot": {
+      "enabled": null,
+      "_collection_ok": false,
+      "_raw": "Sample only: Secure Boot state could not be read; no live target was queried."
+    },
+    "eventlog": {
+      "running": true,
+      "_collection_ok": true,
+      "_raw": "{\"status\": \"Running\"}"
+    }
+  }
+}

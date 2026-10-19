@@ -1,8 +1,11 @@
-# SSH and target preparation
+# Ubuntu SSH and target preparation
 
-Use this checklist before the first live assessment from each laptop. Demo mode
-needs no SSH access. These instructions describe the existing collector; they do
-not configure or remediate the target automatically.
+Use this checklist before the first live **Ubuntu SSH** assessment from each
+laptop. Demo mode needs no SSH access. These instructions describe the existing
+Ubuntu collector; they do not configure or remediate the target automatically.
+Windows/macOS profiles are native local collectors and do not use this SSH
+transport. See [live platform prerequisites](setup.md#live-platform-prerequisites)
+for those profiles and the Ubuntu local mode.
 
 ## Scope and target compatibility
 
@@ -11,8 +14,9 @@ not configure or remediate the target automatically.
 - Use an Ubuntu target with OpenSSH server, a normal login shell, and reachable
   SSH TCP port. The baseline assumes Ubuntu paths, GNU `stat`, systemd, and
   Debian package/APT tools. A macOS or Windows **client** is supported; a macOS,
-  Windows, non-systemd container, or arbitrary Linux **target** is not an
-  equivalent assessment platform.
+  Windows, non-systemd container, or arbitrary Linux **SSH target** is not an
+  equivalent Ubuntu assessment platform. The separate Windows/macOS local
+  profiles do not extend this collector's remote capabilities.
 - The collector reads configuration, service state, and package state using
   `hostname`, `awk`, `head`, `stat`, `grep`, `tail`, `sed`, `systemctl`,
   `dpkg-query`, `apt-config`, and `timedatectl`. It also probes `ufw`,

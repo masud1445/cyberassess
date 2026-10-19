@@ -1,165 +1,146 @@
 # CyberAssess
 
-CyberAssess is a read-only automated cybersecurity compliance and baseline assessment tool for authorized Ubuntu/Linux systems. It uses Python and Paramiko to collect live evidence over SSH, evaluates 15 security controls, produces PASS / FAIL / ERROR results, calculates a severity-weighted compliance score, and generates JSON plus premium self-contained HTML reports.
+CyberAssess is a read-only cybersecurity baseline assessment CLI for authorized Ubuntu, Windows and macOS systems. It collects configuration evidence, evaluates platform-specific controls and produces self-contained HTML and machine-readable JSON reports. It supports a repeatable **assess → review → approve changes → reassess** workflow; it never applies remediation.
 
-## Internship alignment — Pillar 2 / Sub-Track 2.1
+The project remains aligned with **Internship Pillar 2 / Sub-Track 2.1: Automated Compliance / Baseline Assessment Scripts**, supporting supervised labs, SME administration and compliance-readiness reviews.
 
-This project addresses automated compliance and baseline assessment by:
+## Platform profiles and scope
 
-- collecting live OS security configuration evidence over SSH;
-- comparing evidence against a defined Ubuntu security baseline;
-- mapping controls to NIST SP 800-53 references;
-- automatically generating PASS / FAIL / ERROR results and a gap report;
-- providing remediation guidance for lab and SME readiness use;
-- supporting a repeatable **assess → fix → reassess** workflow.
+| Profile | Controls | Live collection | Scope |
+| --- | ---: | --- | --- |
+| `ubuntu` | 15 | Existing SSH collector, or local Ubuntu collector | Original Ubuntu baseline: SSH, firewall, permissions, accounts, password policy, logging, updates, time and Telnet |
+| `windows` | 13 | Native local Windows only | Defender, firewall profiles, BitLocker, RDP/NLA, Guest, UAC, SMBv1 server, inactivity policy, Secure Boot and Event Log |
+| `macos` | 12 | Native local macOS only | FileVault, firewall, SIP, Gatekeeper, explicit update preferences, Remote Login, network time and current-user screen-saver preferences |
 
-## Current baseline
+Each profile maps checks to NIST SP 800-53 references. A profile is a limited baseline, not evidence of certification, a complete audit, or an effective-policy guarantee. Scores describe different control sets and must not be used as an OS ranking.
 
-CyberAssess evaluates 15 controls across:
+**Windows and macOS run on the machine being assessed.** An operator may first open an authorized remote terminal and then launch the local CLI on that target, with Python and CyberAssess installed there. CyberAssess does not provide WinRM, remote PowerShell or remote macOS SSH collection. Ubuntu local collection requires Ubuntu; another Linux distribution, WSL or a container is not automatically an equivalent target.
 
-- SSH hardening
-- host firewall
-- sensitive file permissions
-- local account security
-- password policy
-- audit logging
-- automatic security updates
-- time synchronization
-- insecure Telnet service exposure
+## Fresh-machine setup
 
-The active baseline is stored in `config/controls.json`.
+Use Python **3.10–3.13** (3.12 recommended), Git and a new machine-local virtual environment. No database, web server, Docker or application secrets are required. Clone and check out the reviewed handover revision; this work is on `feature/multiplatform-cyberassess` and is not automatically merged into `main`.
 
-## Result semantics
+```text
+git clone https://github.com/masud1445/cyberassess.git
+cd cyberassess
+git fetch origin
+git switch --detach HANDOVER_REF
+```
 
-- **PASS** — evidence was collected and satisfies the baseline.
-- **FAIL** — evidence was collected and does not satisfy the baseline.
-- **ERROR** — CyberAssess could not reliably collect or interpret the evidence.
+Replace `HANDOVER_REF` with the maintainer's approved commit or fetched branch. An unpublished branch needs the Git bundle procedure in the [runbook](docs/handover-runbook.md).
 
-## Scoring
+macOS/Linux:
 
-CyberAssess uses severity weights:
+```sh
+sh install.sh
+# If needed: PYTHON=python3.12 sh install.sh
+.venv/bin/python -m pytest -q
+.venv/bin/python scripts/check_portability.py
+.venv/bin/python main.py --list-profiles
+.venv/bin/python main.py --profile ubuntu --demo
+```
 
-- HIGH = 3
-- MEDIUM = 2
-- LOW = 1
+Windows PowerShell:
 
-The compliance score is the severity-weighted percentage of passing controls:
+```powershell
+.\install.ps1
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe scripts/check_portability.py
+.\.venv\Scripts\python.exe main.py --list-profiles
+.\.venv\Scripts\python.exe main.py --profile windows --demo
+```
+
+The Windows helper defaults to `py -3.12`; use `-Python "C:\Path\python.exe"` for another supported interpreter. If your execution policy blocks the helper, use the explicit Python commands in [fresh-machine setup](docs/setup.md); no policy change or activation is necessary. Helpers install constrained dependencies, preserve existing `.venv`, fail on an incompatible environment and run `pip check`. They do not start an assessment, elevate privileges or change security settings. Recreate `.venv` on a new machine rather than copying it.
+
+## Demo and live commands
+
+Run from the repository root, using that machine's virtual-environment Python. In the commands below, `python` means `.venv/bin/python` on macOS/Linux or `.\.venv\Scripts\python.exe` on Windows.
+
+```text
+python main.py --version
+python main.py --list-profiles
+python main.py --profile ubuntu --demo --output reports/demo-ubuntu
+python main.py --profile windows --demo --output reports/demo-windows
+python main.py --profile macos --demo --output reports/demo-macos
+```
+
+Every profile's demo is an offline fixture, runnable on any supported development OS; it makes no SSH connection and reads no live security configuration. Windows/macOS fixtures and injected command tests are **mocked evidence**, not validation on native systems. The original `python main.py --demo` remains available with its unchanged Ubuntu sample and legacy JSON format: **15 controls, 7 PASS, 8 FAIL, 0 ERROR, 54.3%**.
+
+After the owner authorizes the target and the [platform prerequisites](docs/setup.md#live-platform-prerequisites) are satisfied:
+
+```text
+# On an Ubuntu target
+python main.py --profile ubuntu --local --output reports/ubuntu-local
+
+# On a native Windows target
+python main.py --profile windows --local --output reports/windows-local
+
+# On a native macOS target
+python main.py --profile macos --local --output reports/macos-local
+
+# Select the current supported OS explicitly through detection
+python main.py --auto-detect --local --output reports/local
+```
+
+`--local` also detects the current supported OS; `--auto-detect` implies local collection. Detection rejects unsupported operating systems. No collection occurs merely by listing profiles or requesting the version. Missing tools, permissions, unavailable settings and uninterpretable evidence must be reviewed as collection limitations; the tool does not automatically grant privileges, install assessment services, or fix the target.
+
+The existing Ubuntu SSH workflow remains available from macOS, Linux or Windows:
+
+```text
+python main.py --host TARGET_ADDRESS --user ASSESSMENT_USER --key "PATH_TO_PRIVATE_KEY"
+```
+
+An explicit `--profile ubuntu` may also be used with the SSH arguments. Follow the [SSH authorization, keys, host trust and passwordless sudo guide](docs/ssh-target-setup.md). The collector requires a supplied key file, does not use an SSH agent and does not prompt for a key passphrase or sudo password. `--accept-new-host` accepts an unknown key for that connection without persisting verified trust. Prefer a trusted `known_hosts` entry.
+
+## Results and scoring
+
+- **PASS** — collected evidence satisfies the control.
+- **FAIL** — collected evidence does not satisfy the control.
+- **ERROR** — evidence is unavailable, ambiguous, unsupported or cannot be reliably interpreted. An ERROR does not prove noncompliance.
+
+All profiles retain the original severity weights: **HIGH = 3, MEDIUM = 2, LOW = 1**.
 
 ```text
 score = round(100 × sum(weights of PASS controls) / sum(weights of all controls), 1)
 ```
 
-Both FAIL and ERROR controls contribute their severity weight to the denominator and earn zero passing weight. ERROR still means unavailable or unreliable evidence, rather than confirmed non-compliance. With no controls, the score is 0.0.
+FAIL and ERROR both retain their weight in the denominator and earn zero passing weight. With no controls the score is 0.0. For the unchanged Ubuntu baseline, total weight is 35: 14 passing controls plus an ERROR on the weight-1 TIME-001 check gives `34 / 35 × 100 = 97.1%`. Review errors even when a report's numerical verdict is Compliant.
 
-For example, this baseline has total weight 35. If 14 controls pass and the weight-1 TIME-001 control has an ERROR, the score is `34 / 35 × 100 = 97.1%`. Review assessment errors even when the numerical verdict is Compliant.
-
-### Report verdict thresholds
-
-- **90–100%** — Compliant
-- **70–89.9%** — Partially compliant
-- **Below 70%** — Non-compliant
-
-These labels are report classifications; the underlying numeric score is not changed by the classification.
-
-## Fresh-machine setup
-
-Use Python **3.10–3.13** (3.12 recommended), Git, and a local virtual environment. The laptop can run macOS, Linux, or Windows; live assessment targets must provide the Ubuntu/Linux tools described in the SSH guide. No server, database, or application secrets are required for the demo.
-
-Follow [Fresh-machine setup](docs/setup.md) for OS-specific installation, PowerShell commands, validation, and troubleshooting. Obtain the approved handover commit/branch first; a fresh clone of `main` may not contain this work until it is merged.
-
-From the repository root on macOS/Linux:
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt -c constraints.txt
-.venv/bin/python -m pip check
-.venv/bin/python -m pytest -q
-.venv/bin/python scripts/check_portability.py
-.venv/bin/python main.py --demo
-```
-
-On Windows (PowerShell, Python 3.12 installed with the launcher):
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints.txt
-.\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe scripts/check_portability.py
-.\.venv\Scripts\python.exe main.py --demo
-```
-
-`requirements.txt` declares the supported dependency ranges; `constraints.txt` selects tested versions for repeatable installation, including the Windows-only test dependency. Recreate the virtual environment on each machine rather than copying it. All application commands must run from the repository root so relative config, sample, and report paths resolve correctly.
-
-## Demo mode
-
-```bash
-python main.py --demo
-```
-
-After activating the virtual environment (or using its Python executable as above), demo mode uses `samples/demo_evidence.json`; it does not connect to a live host. Expected result: **15 controls, 7 PASS, 8 FAIL, 0 ERROR, 54.3%**. Findings in the sample are intentional.
-
-## Live audit
-
-Use CyberAssess only against systems you own or are explicitly authorized to assess. Before running, complete [SSH key, host trust, authorized-target and passwordless sudo prerequisites](docs/ssh-target-setup.md). The current collector needs an explicitly supplied key file; it does not use an SSH agent or prompt for a key passphrase or sudo password.
-
-```bash
-python main.py \
-  --host 192.168.252.2 \
-  --user ubuntu \
-  --key ~/.ssh/cyberassess_lab
-```
-
-The example host is a placeholder for your authorized target. Prefer a verified entry in `~/.ssh/known_hosts`. `--accept-new-host` accepts an unknown host for that connection without establishing its authenticity or persisting trust in this collector; see the SSH guide before using it.
+Report classifications remain **90–100% Compliant**, **70–89.9% Partially compliant**, and **below 70% Non-compliant**. A successful process exit does not mean all controls passed: completed assessments with FAIL/ERROR results still return 0. Inspect the findings and evidence.
 
 ## Reports
 
-Each assessment produces:
+Both JSON and HTML are written to `reports/`, or the directory selected by `--output`. Use the exact two paths printed by the CLI. HTML remains self-contained, responsive, printable on A4 and suitable for direct browser/file preview; no application server is needed. Reports identify the assessment profile/OS for the new explicit-profile workflow and present counts, findings, remediation guidance and compact evidence details. Explicit profiles use a shared versioned JSON report envelope; the original unqualified Ubuntu commands retain their original JSON field structure.
 
-- JSON — machine-readable evidence and results
-- HTML — self-contained report with assessment metadata, summary, category coverage, remediation findings, evidence details and full control table
+Open the printed HTML path with `open "REPORT.html"` on macOS, `xdg-open "REPORT.html"` on a desktop Linux session, or `Invoke-Item "REPORT.html"` in Windows PowerShell. Replace the placeholder with the real path. On a headless host, transfer the paired reports through an approved secure channel to a browser-equipped machine. Evidence can contain sensitive target identifiers and configuration: apply access and retention rules before sharing. Remediation is guidance and is never executed automatically. HTML evidence is compacted and selected recognizable secrets are redacted; this is not a complete data-loss prevention filter, and JSON/raw evidence still requires review before sharing.
 
-The collector is read-only. Remediation commands shown in the report are guidance only and are never executed automatically.
-
-## Handover and portability
-
-- [Fresh-machine setup](docs/setup.md) — macOS, Linux, Windows and dependency maintenance.
-- [SSH target setup](docs/ssh-target-setup.md) — keys, host verification, target tools and privileged reads.
-- [Handover runbook](docs/handover-runbook.md) — transfer checklist, operating procedure, report retention and troubleshooting.
-- [Validation record](docs/portability-validation.md) — executed Linux checks and pending hosted-platform coverage.
-- `python scripts/check_portability.py` — dependency check and isolated demo under a path containing spaces and Unicode, with JSON/HTML validation. It makes no SSH connections and cleans up its temporary reports.
-- [Portability workflow](.github/workflows/portability.yml) — automated Ubuntu Python 3.10/3.12/3.13 and macOS/Windows Python 3.12 jobs. Local Linux validation does not establish that the hosted macOS/Windows jobs have run.
-
-## Project structure
+## Architecture and adding a profile
 
 ```text
-cyberassess/
-├── main.py
-├── requirements.txt
-├── constraints.txt
-├── config/
-│   └── controls.json
-├── cyberassess/
-│   ├── collector.py
-│   ├── evaluator.py
-│   └── reporting.py
-├── samples/
-│   └── demo_evidence.json
-├── tests/
-│   └── test_evaluator.py
-├── scripts/
-│   └── check_portability.py
-├── docs/
-│   ├── setup.md
-│   ├── ssh-target-setup.md
-│   ├── handover-runbook.md
-│   ├── portability-validation.md
-│   ├── student_lab_manual.md
-│   ├── executive_pitch.md
-│   └── work_log_template.md
-└── reports/
+main.py                          CLI and workflow selection
+cyberassess/profiles.py           Profile registry and common report construction
+cyberassess/platforms.py          Supported local platform detection
+cyberassess/collector.py          Original Ubuntu SSH collector
+cyberassess/collectors/           Ubuntu, Windows and macOS local collectors
+cyberassess/evaluator.py          Shared unchanged evaluation and weighted scoring
+cyberassess/reporting.py          Shared JSON/HTML rendering
+config/controls.json             Original 15 Ubuntu controls, unchanged
+config/profiles/                 Windows and macOS control definitions
+samples/                         Offline evidence fixtures
+tests/                           Regression, profile, parser and CLI checks
+scripts/check_portability.py     Dependency and isolated-demo validation
+install.sh / install.ps1         Machine-local dependency setup
 ```
 
-## Safety and scope
+To add a future platform, first document the exact configuration scope, native read-only commands, permissions, expected values and unsupported states. Add a collector returning the shared evidence structure, control definitions using the existing evaluator operators, an offline fixture and a registry entry. Parse structured output where available; do not infer PASS from empty output or a failed command. Missing/denied/unsupported or ambiguous evidence must remain unavailable rather than receive an invented default. Keep execution noninteractive, bounded by timeouts and free of automatic remediation/elevation. Add injected command/parser tests for success, fail, denied, missing-tool, malformed and timeout cases, CLI/profile validation and both report formats. Re-run the original Ubuntu regression tests and demos to protect compatibility. A mocked fixture is not native validation: record real-platform acceptance separately before production use.
 
-CyberAssess is a baseline assessment and teaching/readiness tool. It is not a replacement for a formal compliance audit or penetration test. Always preserve administrative access and validate configuration changes before reloading SSH or enabling firewall rules.
+## Handover and validation
+
+- [Concise handover](docs/HANDOVER.md) — first-run checklist and acceptance gates.
+- [Fresh-machine setup](docs/setup.md) — macOS, Linux, Windows, dependencies and local privilege limitations.
+- [SSH target guide](docs/ssh-target-setup.md) — Ubuntu remote authorization, key/trust and exact sudo requirements.
+- [Operator runbook](docs/handover-runbook.md) — transfers, live assessment, evidence review and report retention.
+- [Validation record](docs/portability-validation.md) — what was exercised and which native/live checks remain pending.
+- [Portability workflow](.github/workflows/portability.yml) — hosted runtime matrix; inspect actual job outcomes rather than assuming a push or test pass.
+
+CyberAssess supports baseline assessment, teaching and readiness. It is not a replacement for a formal compliance audit or penetration test. Any change to the assessed host belongs to the owner's separate change process.
