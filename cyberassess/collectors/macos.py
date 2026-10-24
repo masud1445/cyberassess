@@ -25,6 +25,10 @@ from xml.parsers.expat import ExpatError
 
 from cyberassess.collector import CollectionError
 from cyberassess.collectors._macos_remote_login import parse_override_map, parse_service, resolve_remote_login
+from cyberassess.collectors._macos_status import (
+    automatic_time_status, current_user_status_context_safe, network_time_status,
+    screen_lock_status, software_update_status,
+)
 
 
 class MacOSCollectionError(CollectionError):
@@ -162,6 +166,12 @@ def _preference_payload(text: str) -> dict[str, Any] | None:
     if not isinstance(value, dict) or type(value.get("available")) is not bool:
         return None
     if type(value.get("managed")) is not bool or type(value.get("managed_available")) is not bool:
+        return None
+    scope_names = {"explicit_current_host", "explicit_any_host", "machine_current_host", "machine_any_host"}
+    unreadable = value.get("unreadable_scopes", [])
+    if not isinstance(unreadable, list) or any(type(scope) is not str or scope not in scope_names for scope in unreadable):
+        return None
+    if len(unreadable) != len(set(unreadable)) or any(value.get(scope) is not None for scope in unreadable):
         return None
     for key in ("value", "explicit_current_host", "explicit_any_host", "machine_current_host", "machine_any_host"):
         scalar = value.get(key)
@@ -352,13 +362,13 @@ class MacOSCollector:
         }
 
     def _collect_configured(self, query: _Query) -> dict[str, Any]:
-        primary = self._run_query(query)
+        primary = self._remaining_query(query)
         if primary["_collection_ok"] or query.source not in _UNAVAILABLE_HINTS:
             return primary
         failures = [primary["_raw"]]
         fallbacks = _fallback_queries(query)
         for fallback in fallbacks:
-            result = self._run_query(fallback)
+            result = self._remaining_query(fallback)
             if result["_collection_ok"]:
                 return result
             if result["_raw"] not in failures:
@@ -369,7 +379,7 @@ class MacOSCollector:
 
     def _preferences(self, domain: str, key: str) -> tuple[dict[str, Any] | None, str]:
         command = (sys.executable, _PREFERENCE_HELPER, domain, key)
-        result, reason = self._invoke(command)
+        result, reason = self._invoke_remaining(command)
         if reason:
             return None, reason
         if result.returncode != 0 or (result.stderr or "").strip():
@@ -441,21 +451,70 @@ class MacOSCollector:
         # A current-user suite value alone cannot establish a daemon's machine
         # policy. Require the matching managed machine key as independent scope.
         policy = _plist_query(query, Path("/Library/Managed Preferences") / (domain + ".plist"), key)
-        observation = self._run_query(policy)
+        observation = self._remaining_query(policy)
         value = _boolean(payload.get("value"))
         return value if observation["_collection_ok"] and observation[query.key] is value else None
+
+    def _invoke_remaining(self, command: tuple[str, ...]) -> tuple[Any, str | None]:
+        """Keep malformed byte output unavailable in the four scoped paths."""
+        try:
+            return self._invoke(command)
+        except UnicodeError:
+            answer = (None, "Unavailable: native evidence output could not be decoded reliably.")
+            self._command_cache[command] = answer
+            return answer
+
+    def _remaining_query(self, query: _Query) -> dict[str, Any]:
+        # Preload a bounded cached result without changing the shared decoder
+        # or MAC-009's behavior. The configured/policy callers are scoped here.
+        self._invoke_remaining(query.command)
+        return self._run_query(query)
+
+    def _read_status_streams(self, query: _Query, parser: Callable[..., Value]) -> dict[str, Any]:
+        """Only the remaining update/time getters use stream-aware decoding."""
+        native, reason = self._invoke_remaining(query.command)
+        if reason:
+            return self._unknown(query, reason)
+        value = parser(native.stdout or "", native.stderr or "", native.returncode)
+        if value is None:
+            return self._unknown(query, "Unavailable: native status output was empty, failed, unsupported or ambiguous.")
+        return self._effective(query, value, "effective native status; exactly one recognized status across output streams")
+
+    def _stream_aware_elevated_status(self, query: _Query, normal: dict[str, Any], parser: Callable[..., Value]) -> dict[str, Any] | None:
+        # Preserve the existing opt-in, retry policy and exact sudo allowlist.
+        # Reinterpret only an already executed, clean status result; never
+        # introduce another retry or change another control's decoder.
+        try:
+            result = self._optional_elevated_status(query, normal)
+        except UnicodeError:
+            reason = "Unavailable: opted-in native status output could not be decoded reliably; no value was inferred."
+            self._command_cache[("/usr/bin/sudo", "-n", "--", *query.command)] = (None, reason)
+            return self._unavailable_effective(query, reason)
+        if result is None or result["_collection_ok"]:
+            return result
+        entry = self._command_cache.get(("/usr/bin/sudo", "-n", "--", *query.command))
+        if not entry or entry[1] or entry[0] is None:
+            return result
+        native = entry[0]
+        value = parser(native.stdout or "", native.stderr or "", native.returncode)
+        if value is None:
+            return result
+        return self._effective(query, value, "effective system state via explicit sudo -n read of " + " ".join(query.command) + "; status stream decoded without retaining native logs")
 
     def _effective_update_check(self, query: _Query) -> dict[str, Any]:
         configured = self._collect_configured(query)
         status_query = _Query(query.source, query.key, ("/usr/sbin/softwareupdate", "--schedule"), _update_schedule)
-        status = self._run_query(status_query)
+        status = self._read_status_streams(status_query, software_update_status)
         payload, reason = self._preferences("com.apple.SoftwareUpdate", "AutomaticCheckEnabled")
         resolved = self._machine_policy(query, "com.apple.SoftwareUpdate", "AutomaticCheckEnabled", payload)
         if resolved is None and payload and payload.get("managed_available") is True and payload.get("managed") is False:
+            unreadable = payload.get("unreadable_scopes", [])
             machine = payload.get("machine_current_host")
-            if machine is None:
+            selected_scope = "machine_current_host"
+            if machine is None and selected_scope not in unreadable:
                 machine = payload.get("machine_any_host")
-            machine = _boolean(machine)
+                selected_scope = "machine_any_host"
+            machine = None if selected_scope in unreadable else _boolean(machine)
             if machine is not None and machine is _boolean(payload.get("value")):
                 resolved = machine
         if status["_collection_ok"] and resolved is not None and status[query.key] is not resolved:
@@ -464,7 +523,7 @@ class MacOSCollector:
             return self._effective(query, status[query.key], "effective machine state via softwareupdate --schedule", configured)
         if resolved is not None:
             return self._effective(query, resolved, "effective resolved machine preference via CoreFoundation", configured)
-        elevated = self._optional_elevated_status(status_query, status)
+        elevated = self._stream_aware_elevated_status(status_query, status, software_update_status)
         if elevated is not None:
             if elevated["_collection_ok"]:
                 return self._effective(query, elevated[query.key], elevated["_scope"], configured)
@@ -475,6 +534,24 @@ class MacOSCollector:
         payload, reason = self._preferences(_SCREENSAVER, query.command[-1])
         parser = _numeric_delay if query.source == "screen_lock_delay" else _boolean
         value = None if payload is None else parser(payload.get("value"))
+        # Modern native lock state can live outside the old screensaver domain.
+        # Its process/console selection is not a public contract: require both
+        # to name the same invoking user before this read-only fallback runs.
+        if current_user_status_context_safe():
+            native, native_reason = self._invoke_remaining(("/usr/sbin/sysadminctl", "-screenLock", "status"))
+            native_state = None if native_reason else screen_lock_status(native.stdout or "", native.stderr or "", native.returncode)
+            if native_state is not None:
+                if not current_user_status_context_safe():
+                    return self._unavailable_effective(query, "Invoking/console identity changed during the native screen-lock query; the result was discarded.")
+                current = native_state[1] if query.source == "screen_lock_delay" else native_state[0]
+                managed = bool(payload and payload.get("managed_available") is True and payload.get("managed") is True)
+                if current is not None and managed and value is not None and current != value:
+                    return self._unavailable_effective(query, "Native screen-lock status contradicts the enforced managed preference.")
+                if current is None:
+                    return self._unavailable_effective(query, "Native screen lock is off and supplies no numeric password delay; no zero or sentinel was invented.")
+                explicit = None if payload is None else parser(payload.get("explicit_any_host"))
+                configured = {query.key: explicit, "_collection_ok": explicit is not None}
+                return self._effective(query, current, "effective current-user screen-lock status via sysadminctl; invoking and console identities matched; preference migration does not imply a default", configured)
         if value is None:
             return self._unavailable_effective(query, reason)
         # Exact configured values come from the same guarded native helper.
@@ -482,9 +559,14 @@ class MacOSCollector:
         explicit = parser(payload.get("explicit_any_host"))
         configured = {query.key: explicit, "_collection_ok": explicit is not None}
         highest = payload.get("explicit_current_host")
-        if highest is None:
+        highest_scope = "explicit_current_host"
+        unreadable = payload.get("unreadable_scopes", [])
+        if highest is None and highest_scope not in unreadable:
             highest = payload.get("explicit_any_host")
+            highest_scope = "explicit_any_host"
         managed = payload.get("managed_available") is True and payload.get("managed") is True
+        if not managed and highest_scope in unreadable:
+            return self._unavailable_effective(query, "A higher-priority configured preference is unreadable; its absence was not assumed.")
         if highest is not None and not managed and (parser(highest) is None or parser(highest) != value):
             return self._unavailable_effective(query, "Resolved and highest-priority configured preferences disagree without a verified managed override.")
         # MAC-011 independently compares a known delay against zero. Password
@@ -527,21 +609,27 @@ class MacOSCollector:
         return self._effective(query, value, "effective launchd service configuration; override map, registration and actual service definition checked")
 
     def _effective_network_time(self, query: _Query) -> dict[str, Any]:
-        status = self._run_query(query)
+        status = self._read_status_streams(query, network_time_status)
+        automatic_query = _Query(query.source, query.key, ("/usr/sbin/sysadminctl", "-automaticTime", "status"), _network_time)
+        automatic = self._read_status_streams(automatic_query, automatic_time_status)
         payload, reason = self._preferences("com.apple.timed", "TMAutomaticTimeOnlyEnabled")
         policy = self._machine_policy(query, "com.apple.timed", "TMAutomaticTimeOnlyEnabled", payload)
+        if status["_collection_ok"] and automatic["_collection_ok"] and status[query.key] is not automatic[query.key]:
+            return self._unavailable_effective(query, "Native systemsetup and sysadminctl automatic-time status disagree.")
         # This key enforces automatic time when true. False/unforced is not a
         # report that automatic time is off, so it cannot become FAIL or PASS.
-        if policy is True and status["_collection_ok"] and status[query.key] is False:
+        if policy is True and any(result["_collection_ok"] and result[query.key] is False for result in (status, automatic)):
             return self._unavailable_effective(query, "Native time status contradicts the enforced machine automatic-time policy.")
         if status["_collection_ok"]:
             return self._effective(query, status[query.key], "effective system state via systemsetup -getusingnetworktime; synchronization success is not verified")
+        if automatic["_collection_ok"]:
+            return self._effective(query, automatic[query.key], "effective machine automatic-time status via unelevated sysadminctl -automaticTime status; synchronization success is not verified")
         if policy is True:
             return self._effective(query, True, "effective enforced machine automatic-time policy verified with CoreFoundation and managed machine preference; synchronization success is not verified")
-        elevated = self._optional_elevated_status(query, status)
+        elevated = self._stream_aware_elevated_status(query, status, network_time_status)
         if elevated is not None:
             return elevated
-        return self._unavailable_effective(query, status["_raw"] + " " + reason + " An unforced or false enforcement preference does not determine automatic-time state.")
+        return self._unavailable_effective(query, status["_raw"] + " " + reason + " Native automatic-time getter: " + automatic["_raw"] + " An unforced or false enforcement preference does not determine automatic-time state.")
 
     def _collect_query(self, query: _Query) -> dict[str, Any]:
         if query.source == "update_check":

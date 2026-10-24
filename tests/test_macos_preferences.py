@@ -40,17 +40,21 @@ class NativeLibrary:
         self.copied = []
         self.released = []
         self.conversion_ok = True
+        self.string_conversion_ok = True
         self.fail_string = None
         self.CFStringCreateWithCString = Function(self.create_string)
         self.CFPreferencesCopyAppValue = Function(lambda key, app: self.copy(self.effective))
         self.CFPreferencesCopyValue = Function(lambda key, app, user, host: self.copy(self.configured.get((user, host))))
         self.CFPreferencesAppValueIsForced = Function(lambda key, app: int(self.managed))
-        self.CFGetTypeID = Function(lambda reference: {"boolean": 10, "integer": 20, "real": 20}.get(self.objects[reference][0], 30))
+        self.CFGetTypeID = Function(lambda reference: {"boolean": 10, "integer": 20, "real": 20, "string": 30}.get(self.objects[reference][0], 40))
         self.CFBooleanGetTypeID = Function(lambda: 10)
         self.CFNumberGetTypeID = Function(lambda: 20)
         self.CFBooleanGetValue = Function(lambda reference: int(self.objects[reference][1]))
         self.CFNumberIsFloatType = Function(lambda reference: int(self.objects[reference][0] == "real"))
         self.CFNumberGetValue = Function(self.get_number)
+        self.CFStringGetTypeID = Function(lambda: 30)
+        self.CFStringGetLength = Function(lambda reference: len(self.objects[reference][1].encode("utf-16-le")) // 2)
+        self.CFStringGetCString = Function(self.get_string)
         self.CFRelease = Function(self.released.append)
 
     def create_string(self, allocator, text, encoding):
@@ -77,6 +81,17 @@ class NativeLibrary:
         expected = probe._NUMBER_DOUBLE if self.objects[reference][0] == "real" else probe._NUMBER_SINT64
         assert number_type == expected
         output._obj.value = self.objects[reference][1]
+        return 1
+
+    def get_string(self, reference, output, capacity, encoding):
+        assert encoding == probe._UTF8
+        assert capacity == 33
+        if not self.string_conversion_ok:
+            return 0
+        encoded = self.objects[reference][1].encode("utf-8")
+        if len(encoded) + 1 > capacity:
+            return 0
+        ctypes.memmove(output, encoded + b"\0", len(encoded) + 1)
         return 1
 
     def assert_released(self):
@@ -138,6 +153,153 @@ def test_native_scalar_types_are_preserved_without_coercing_defaults(tag, value,
     native.assert_released()
 
 
+@pytest.mark.parametrize("domain,key", [
+    ("com.apple.SoftwareUpdate", "AutomaticCheckEnabled"),
+    ("com.apple.screensaver", "askForPassword"),
+    ("com.apple.timed", "TMAutomaticTimeOnlyEnabled"),
+])
+@pytest.mark.parametrize("text,expected", [
+    ("true", True), ("TRUE", True), ("TrUe", True), ("YES", True),
+    ("false", False), ("FALSE", False), ("FaLsE", False), ("no", False),
+])
+def test_legacy_boolean_strings_use_the_verified_native_lexemes(domain, key, text, expected, native):
+    native.effective = ("string", text)
+    result = probe.read_preferences(domain, key)
+    assert result["available"] is True
+    assert result["value"] is expected
+    assert type(result["value"]) is bool
+    assert native.CFStringGetCString.calls
+    native.assert_released()
+
+
+@pytest.mark.parametrize("text,expected", [("0", 0), ("0005", 5), ("300", 300), ("2147483647", 2_147_483_647)])
+def test_legacy_delay_integer_strings_remain_exact_known_numbers(text, expected, native):
+    native.effective = ("string", text)
+    result = probe.read_preferences("com.apple.screensaver", "askForPasswordDelay")
+    assert result["available"] is True
+    assert result["value"] == expected
+    assert type(result["value"]) is int
+    native.assert_released()
+
+
+@pytest.mark.parametrize("text", [
+    "", "0", "1", "2", " true", "true ", "TRUE\n", "on", "enabled",
+    "private-user password=hidden", "true\0hidden", "true\u200b", "ＴＲＵＥ",
+])
+def test_boolean_string_recognition_never_uses_truthiness_or_trims_ambiguous_input(text, native):
+    native.effective = ("string", text)
+    result = observe()
+    assert result["available"] is False
+    assert result["value"] is None
+    assert "private-user" not in json.dumps(result)
+    assert "hidden" not in json.dumps(result)
+    native.assert_released()
+
+
+@pytest.mark.parametrize("text", [
+    "", "true", "YES", "false", "NO", "-1", "+0", "0.0", "5.5", "1e2",
+    " 0", "0 ", "０", "2147483648", "0" * 33, "0\0hidden",
+])
+def test_delay_strings_require_bounded_full_nonnegative_ascii_integers(text, native):
+    native.effective = ("string", text)
+    result = probe.read_preferences("com.apple.screensaver", "askForPasswordDelay")
+    assert result["available"] is False
+    assert result["value"] is None
+    assert "hidden" not in json.dumps(result)
+    native.assert_released()
+
+
+def test_valid_string_scope_values_preserve_precedence_observations_without_raw_strings(native):
+    native.effective = ("string", "YES")
+    native.managed = True
+    native.configured = {
+        (1, 3): ("string", "NO"), (1, 4): ("string", "false"),
+        (2, 3): ("string", "TrUe"), (2, 4): ("boolean", True),
+    }
+    result = observe()
+    assert result["available"] is True
+    assert result["value"] is True
+    assert result["explicit_current_host"] is False
+    assert result["explicit_any_host"] is False
+    assert result["machine_current_host"] is True
+    assert result["machine_any_host"] is True
+    assert result["managed"] is True
+    assert result["unreadable_scopes"] == []
+    serialized = json.dumps(result)
+    for text in ("YES", "NO", "TrUe"):
+        assert text not in serialized
+    native.assert_released()
+
+
+def test_absent_effective_value_is_not_replaced_by_a_valid_explicit_string(native):
+    native.effective = None
+    native.configured = {(1, 4): ("string", "true")}
+    result = observe()
+    assert result["available"] is False
+    assert result["value"] is None
+    assert result["explicit_any_host"] is True
+    assert result["unreadable_scopes"] == []
+    native.assert_released()
+
+
+@pytest.mark.parametrize("missing", ["CFStringGetTypeID", "CFStringGetLength", "CFStringGetCString"])
+def test_optional_string_api_absence_does_not_break_typed_boolean_reads(missing, native):
+    delattr(native, missing)
+    assert observe()["value"] is True
+    native.assert_released()
+
+
+@pytest.mark.parametrize("missing", ["CFStringGetTypeID", "CFStringGetLength", "CFStringGetCString"])
+def test_string_observation_remains_unknown_without_required_string_api(missing, native):
+    delattr(native, missing)
+    native.effective = ("string", "true")
+    result = observe()
+    assert result["available"] is False
+    assert result["value"] is None
+    native.assert_released()
+
+
+def test_native_string_conversion_failure_is_not_an_empty_or_false_value(native):
+    native.effective = ("string", "true")
+    native.string_conversion_ok = False
+    result = observe()
+    assert result["available"] is False
+    assert result["value"] is None
+    native.assert_released()
+
+
+@pytest.mark.parametrize("length", [-1, 0, 33, 2**63 - 1])
+def test_native_string_lengths_are_bounded_before_copying(length, native):
+    native.effective = ("string", "true")
+    native.CFStringGetLength.callback = lambda reference: length
+    result = observe()
+    assert result["available"] is False
+    assert not native.CFStringGetCString.calls
+    native.assert_released()
+
+
+def test_string_probe_exception_remains_unknown_and_sanitized(native):
+    native.effective = ("string", "true")
+
+    def denied(*arguments):
+        raise PermissionError("private-user credential=hidden")
+
+    native.CFStringGetCString.callback = denied
+    result = observe()
+    assert result["available"] is False
+    assert result["value"] is None
+    assert "private-user" not in json.dumps(result)
+    assert "hidden" not in json.dumps(result)
+    native.assert_released()
+
+
+def test_string_interpretation_requires_an_explicit_allowlisted_kind(native):
+    reference = native.copy(("string", "true"))
+    with pytest.raises(probe._UnreadableValue):
+        probe._copy_scalar(native, reference)
+    native.assert_released()
+
+
 def test_absence_is_never_false_or_zero(native):
     native.effective = None
     result = observe()
@@ -146,6 +308,7 @@ def test_absence_is_never_false_or_zero(native):
     assert result["reason"] == "missing-or-unreadable-effective-value"
     assert not native.CFBooleanGetValue.calls
     assert not native.CFNumberGetValue.calls
+    assert not native.CFStringGetCString.calls
     native.assert_released()
 
 
@@ -215,11 +378,104 @@ def test_numeric_conversion_failure_is_not_a_truncated_value(native):
     native.assert_released()
 
 
-def test_invalid_configured_object_does_not_become_effective_success(native):
+def test_invalid_higher_priority_configured_object_is_flagged_without_erasing_effective_value(native):
     native.configured = {(1, 3): ("string", "secret diagnostic")}
     result = observe()
-    assert result["available"] is False
+    assert result["available"] is True
+    assert result["value"] is True
+    assert result["explicit_current_host"] is None
+    assert result["unreadable_scopes"] == ["explicit_current_host"]
     assert "secret" not in json.dumps(result)
+    native.assert_released()
+
+
+@pytest.mark.parametrize("scope,user,host", [
+    ("explicit_current_host", 1, 3),
+    ("explicit_any_host", 1, 4),
+    ("machine_current_host", 2, 3),
+    ("machine_any_host", 2, 4),
+])
+@pytest.mark.parametrize("malformed", [
+    ("string", "private-user credential=hidden"),
+    ("dictionary", {"password": "hidden"}),
+    ("real", float("nan")),
+    ("real", float("inf")),
+])
+def test_each_unreadable_supplemental_scope_is_isolated_and_sanitized(scope, user, host, malformed, native):
+    native.effective = ("boolean", False)
+    native.configured = {(user, host): malformed}
+    result = observe()
+    assert result["available"] is True
+    assert result["value"] is False
+    assert result[scope] is None
+    assert result["unreadable_scopes"] == [scope]
+    assert "private-user" not in json.dumps(result, allow_nan=False)
+    assert "hidden" not in json.dumps(result, allow_nan=False)
+    native.assert_released()
+
+
+def test_managed_effective_value_survives_unreadable_lower_priority_configuration(native):
+    native.effective = ("boolean", True)
+    native.managed = True
+    native.configured = {
+        (1, 4): ("string", "legacy-private-value"),
+        (2, 4): ("dictionary", {"token": "hidden"}),
+    }
+    result = observe()
+    assert result["available"] is True
+    assert result["value"] is True
+    assert result["managed_available"] is True
+    assert result["managed"] is True
+    assert result["unreadable_scopes"] == ["explicit_any_host", "machine_any_host"]
+    assert "legacy-private-value" not in json.dumps(result)
+    assert "hidden" not in json.dumps(result)
+    native.assert_released()
+
+
+def test_missing_effective_value_is_not_replaced_by_an_unreadable_configured_scope(native):
+    native.effective = None
+    native.configured = {(1, 4): ("string", "not-a-boolean")}
+    result = observe()
+    assert result["available"] is False
+    assert result["value"] is None
+    assert result["explicit_any_host"] is None
+    assert result["unreadable_scopes"] == ["explicit_any_host"]
+    assert result["reason"] == "missing-or-unreadable-effective-value"
+    native.assert_released()
+
+
+def test_missing_keys_are_distinct_from_unreadable_observations(native):
+    native.effective = None
+    result = observe()
+    assert result["available"] is False
+    assert result["value"] is None
+    assert result["unreadable_scopes"] == []
+    for field in ("explicit_current_host", "explicit_any_host", "machine_current_host", "machine_any_host"):
+        assert result[field] is None
+    native.assert_released()
+
+
+def test_supplemental_numeric_conversion_failure_does_not_erase_boolean_effective_value(native):
+    native.configured = {(2, 4): ("integer", 1)}
+    native.conversion_ok = False
+    result = observe()
+    assert result["available"] is True
+    assert result["value"] is True
+    assert result["machine_any_host"] is None
+    assert result["unreadable_scopes"] == ["machine_any_host"]
+    native.assert_released()
+
+
+def test_native_scope_read_exception_remains_conservative_and_does_not_leak_details(native):
+    def denied(*arguments):
+        raise PermissionError("private-user credential=hidden")
+    native.CFPreferencesCopyValue.callback = denied
+    result = observe()
+    assert result["available"] is False
+    assert result["value"] is None
+    assert result["reason"] == "native-preference-read-unavailable"
+    assert "private-user" not in json.dumps(result)
+    assert "hidden" not in json.dumps(result)
     native.assert_released()
 
 
@@ -247,6 +503,9 @@ def test_ffi_definitions_preserve_64_bit_pointers_and_numeric_types(native):
     assert native.CFBooleanGetValue.restype is ctypes.c_ubyte
     assert native.CFNumberGetValue.argtypes == (ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p)
     assert native.CFRelease.restype is None
+    assert native.CFStringGetTypeID.restype is ctypes.c_ulong
+    assert native.CFStringGetLength.restype is ctypes.c_long
+    assert native.CFStringGetCString.argtypes == (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long, ctypes.c_uint32)
     native.assert_released()
 
 

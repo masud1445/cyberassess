@@ -394,7 +394,14 @@ def test_missing_all_five_values_stays_error_without_defaults_or_user_substituti
     assert assessment["failed"] == 0
     assert "absent delay is not zero" in evidence["screen_lock_delay"]["_raw"]
     assert ["/usr/sbin/softwareupdate", "--schedule"] in [cmd for cmd, _ in calls]
-    assert not any("sysadminctl" in cmd[0] or "-currentHost" in cmd for cmd, _ in calls)
+    assert not any("-currentHost" in cmd for cmd, _ in calls)
+    assert all(
+        tuple(cmd) in {
+            ("/usr/sbin/sysadminctl", "-screenLock", "status"),
+            ("/usr/sbin/sysadminctl", "-automaticTime", "status"),
+        }
+        for cmd, _ in calls if cmd[0] == "/usr/sbin/sysadminctl"
+    )
 
 
 @pytest.mark.parametrize("response", [
