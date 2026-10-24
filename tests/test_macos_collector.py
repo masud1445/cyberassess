@@ -19,6 +19,16 @@ def controls():
     return json.loads(Path("config/profiles/macos.json").read_text(encoding="utf-8"))
 
 
+def effective_payload(value, *, domain="com.apple.screensaver", managed=False):
+    return json.dumps({
+        "available": value is not None, "value": value,
+        "managed": managed, "managed_available": True,
+        "explicit_current_host": None, "explicit_any_host": value,
+        "machine_current_host": None,
+        "machine_any_host": value if domain == "com.apple.SoftwareUpdate" else None,
+    })
+
+
 def native_output(command):
     """Representative native output for a fully explicit passing fixture."""
     if command[-1] == "status" and command[0].endswith("fdesetup"):
@@ -46,6 +56,18 @@ def runner_with_override(match=None, output=None, returncode=0, stderr="", error
     def run(command, **kwargs):
         if calls is not None:
             calls.append((command, kwargs))
+        if command[0] == sys.executable or command[0] == "/usr/sbin/softwareupdate":
+            domain, key = command[-2:] if command[0] == sys.executable else ("com.apple.SoftwareUpdate", "AutomaticCheckEnabled")
+            original = ["/usr/bin/defaults", "read", domain, key]
+            raw = output or "" if match is not None and match in original else native_output(original)
+            valid = not (match is not None and match in original and (returncode or stderr or error))
+            value = (macos._delay(raw) if key == "askForPasswordDelay" else macos._preference(raw)) if valid else None
+            if domain == "com.apple.timed":
+                value = None  # No machine-enforcement evidence in this fixture.
+            if command[0] == sys.executable:
+                return subprocess.CompletedProcess(command, 0, effective_payload(value, domain=domain), "")
+            schedule = "" if value is None else ("Automatic check is on" if value else "Automatic check is off")
+            return subprocess.CompletedProcess(command, 0, schedule, "")
         if match is not None and match in command:
             if error is not None:
                 raise error
@@ -75,9 +97,11 @@ def test_passing_native_fixtures_and_fixed_read_only_commands():
     assert bundle["collector"]["mode"] == "local"
     assert bundle["collector"]["read_only"] is True
     assert "invoking user" in bundle["collector"]["scope"]
-    assert len(calls) == 12
+    assert len(calls) == len({tuple(command) for command, _ in calls})
     for command, options in calls:
-        assert command[0].startswith(("/usr/bin/", "/usr/sbin/", "/usr/libexec/"))
+        assert command[0].startswith(("/usr/bin/", "/usr/sbin/", "/usr/libexec/")) or command[0] == sys.executable
+        if command[0] == sys.executable:
+            assert Path(command[1]).is_absolute() and command[1].endswith("_macos_preferences.py")
         assert options["shell"] is False
         assert options["check"] is False
         assert options["timeout"] == 10
@@ -180,11 +204,11 @@ def test_unknown_native_output_is_not_retained_in_evidence():
     assert "private diagnostic" not in serialized
 
 
-def test_preference_scope_does_not_claim_effective_or_all_user_policy():
+def test_effective_scope_distinguishes_configured_values_and_invoking_user():
     evidence = collect_override()
-    assert "invoking user's" in evidence["screen_lock"]["_scope"]
-    assert "effective/ByHost/MDM policy is not verified" in evidence["screen_lock"]["_raw"]
-    assert "effective MDM policy is not verified" in evidence["update_check"]["_raw"]
+    assert "current-user/ByHost resolved" in evidence["screen_lock"]["_scope"]
+    assert "explicit configured value=true" in evidence["screen_lock"]["_raw"]
+    assert "effective machine state" in evidence["update_check"]["_scope"]
 
 
 def test_default_runner_rejects_a_non_macos_host(monkeypatch):
@@ -221,7 +245,13 @@ def fallback_runner(replacements=None, *, calls=None):
     def run(command, **options):
         if calls is not None:
             calls.append((command, options))
-        if command[0] == "/usr/bin/plutil":
+        if command[0] == sys.executable:
+            name = "effective:" + ":".join(command[-2:])
+        elif command[0] == "/usr/sbin/softwareupdate":
+            name = "schedule"
+        elif command[:2] == ["/bin/launchctl", "print"]:
+            name = "service"
+        elif command[0] == "/usr/bin/plutil":
             name = command[2]
         elif command[:2] == ["/bin/launchctl", "print-disabled"]:
             name = "launchd"
@@ -253,7 +283,7 @@ def invoking_home(monkeypatch):
     return home
 
 
-def test_five_legacy_errors_recover_only_with_explicit_read_only_fallbacks(invoking_home):
+def test_five_legacy_errors_recover_with_authoritative_effective_evidence(invoking_home):
     calls = []
     responses = {
         "AutomaticCheckEnabled": extracted_plist(True),
@@ -261,6 +291,12 @@ def test_five_legacy_errors_recover_only_with_explicit_read_only_fallbacks(invok
         "askForPassword": extracted_plist(True),
         "askForPasswordDelay": extracted_plist(0),
         "timed": "1\n",
+        "schedule": "Automatic check is on",
+        "service": (113, "", 'Could not find service "com.openssh.sshd" in domain for system'),
+        "effective:com.apple.screensaver:askForPassword": effective_payload(True),
+        "effective:com.apple.screensaver:askForPasswordDelay": effective_payload(0),
+        "effective:com.apple.timed:TMAutomaticTimeOnlyEnabled": effective_payload(True, domain="com.apple.timed", managed=True),
+        "TMAutomaticTimeOnlyEnabled": extracted_plist(True),
     }
     bundle = MacOSCollector(runner=fallback_runner(responses, calls=calls)).collect()
     result = evaluate_baseline(controls(), bundle["evidence"])
@@ -268,9 +304,9 @@ def test_five_legacy_errors_recover_only_with_explicit_read_only_fallbacks(invok
     assert result["errors"] == 0
     assert result["compliance_score"] == 100.0
     plist_commands = [cmd for cmd, _ in calls if cmd[0] == "/usr/bin/plutil"]
-    assert len(plist_commands) == 3
+    assert len([cmd for cmd in plist_commands if cmd[2] in {"AutomaticCheckEnabled", "askForPassword", "askForPasswordDelay"}]) == 1
     assert all(cmd[1:2] == ["-extract"] and cmd[3:6] == ["xml1", "-o", "-"] for cmd in plist_commands)
-    assert any(cmd[-1] == str(invoking_home / "Library/Preferences/com.apple.screensaver.plist") for cmd in plist_commands)
+    assert not any(cmd[2] in {"askForPassword", "askForPasswordDelay"} for cmd in plist_commands)
     assert ["/bin/launchctl", "print-disabled", "system"] in [cmd for cmd, _ in calls]
     for cmd, options in calls:
         assert options["shell"] is False
@@ -279,7 +315,7 @@ def test_five_legacy_errors_recover_only_with_explicit_read_only_fallbacks(invok
         assert options["env"]["LC_ALL"] == "C"
         assert "sudo" not in cmd
         assert not any(arg.startswith(("-set", "--set", "--enable", "--disable", "-replace", "-insert")) for arg in cmd)
-    assert "explicit com.openssh.sshd" in bundle["evidence"]["remote_login"]["_scope"]
+    assert "effective launchd" in bundle["evidence"]["remote_login"]["_scope"]
     assert "synchronization" in bundle["evidence"]["network_time"]["_scope"]
     assert "private" not in json.dumps(bundle["evidence"])
 
@@ -294,19 +330,19 @@ def test_five_legacy_errors_recover_only_with_explicit_read_only_fallbacks(invok
     ("timed", "network_time", "0", False),
     ("TMAutomaticTimeOnlyEnabled", "network_time", extracted_plist(False), False),
 ])
-def test_explicit_fallback_values_preserve_pass_fail(key, source, output, actual, invoking_home):
+def test_explicit_fallback_alone_does_not_claim_effective_state(key, source, output, actual, invoking_home):
     evidence = MacOSCollector(runner=fallback_runner({key: output})).collect()["evidence"]
     result = evaluate_source(source, evidence)
-    assert evidence[source]["_collection_ok"] is True
-    assert result["actual"] == actual
-    expected_pass = actual is True if source != "screen_lock_delay" else actual == 0
-    assert result["status"] == ("PASS" if expected_pass else "FAIL")
+    assert evidence[source]["_collection_ok"] is False
+    assert result["actual"] is None
+    assert result["status"] == "ERROR"
 
 
 @pytest.mark.parametrize("state,actual", [("disabled", False), ("enabled", True), ("true", False), ("false", True)])
 def test_launchctl_exact_ssh_override_supports_modern_and_older_output(state, actual, invoking_home):
     output = 'disabled services = {\n "com.company.unrelated" => enabled\n "com.openssh.sshd" => ' + state + '\n}'
-    evidence = MacOSCollector(runner=fallback_runner({"launchd": output})).collect()["evidence"]
+    service = ('system/com.openssh.sshd = {\n path = /System/Library/LaunchDaemons/ssh.plist\n type = LaunchDaemon\n state = not running\n}') if actual else (113, "", 'Could not find service "com.openssh.sshd" in domain for system')
+    evidence = MacOSCollector(runner=fallback_runner({"launchd": output, "service": service})).collect()["evidence"]
     result = evaluate_source("remote_login", evidence)
     assert result["actual"] is actual
     assert result["status"] == ("FAIL" if actual else "PASS")
@@ -357,7 +393,8 @@ def test_missing_all_five_values_stays_error_without_defaults_or_user_substituti
     assert assessment["passed"] == 7
     assert assessment["failed"] == 0
     assert "absent delay is not zero" in evidence["screen_lock_delay"]["_raw"]
-    assert not any("softwareupdate" in cmd[0] or "sysadminctl" in cmd[0] or "-currentHost" in cmd for cmd, _ in calls)
+    assert ["/usr/sbin/softwareupdate", "--schedule"] in [cmd for cmd, _ in calls]
+    assert not any("sysadminctl" in cmd[0] or "-currentHost" in cmd for cmd, _ in calls)
 
 
 @pytest.mark.parametrize("response", [
@@ -404,7 +441,7 @@ def test_unknown_or_mismatched_invoking_user_never_reads_another_home(monkeypatc
     evidence = MacOSCollector(runner=fallback_runner(calls=calls)).collect()["evidence"]
     for source in ("screen_lock", "screen_lock_delay"):
         assert evaluate_source(source, evidence)["status"] == "ERROR"
-        assert "home could not be resolved safely" in evidence[source]["_raw"]
+        assert evidence[source]["_scope"] == "unavailable effective local state"
     assert not any(cmd[0] == "/usr/bin/plutil" and cmd[2] in {"askForPassword", "askForPasswordDelay"} for cmd, _ in calls)
 
 

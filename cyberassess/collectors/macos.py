@@ -1,6 +1,7 @@
 """Read-only, local macOS evidence with deliberately narrow output parsing.
 
-Only the fixed queries below run. No command changes settings or requests sudo.
+Only the fixed queries below run. No command changes settings. Explicit opt-in
+permits noninteractive sudo only for three allowlisted read-only status commands.
 Missing preferences, unsupported commands, and uncertain output stay unknown;
 they must never stand in for a secure default. Raw evidence is an allowlisted
 summary, not an unrestricted dump of native command output.
@@ -9,6 +10,7 @@ summary, not an unrestricted dump of native command output.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import math
 import os
 from pathlib import Path
@@ -16,11 +18,13 @@ import platform
 import plistlib
 import re
 import subprocess
+import sys
 from typing import Any, Callable
 from xml.etree import ElementTree
 from xml.parsers.expat import ExpatError
 
 from cyberassess.collector import CollectionError
+from cyberassess.collectors._macos_remote_login import parse_override_map, parse_service, resolve_remote_login
 
 
 class MacOSCollectionError(CollectionError):
@@ -90,7 +94,7 @@ def _plist_value(text: str) -> Any:
         if root.tag != "plist" or len(root) != 1 or (root.text or "").strip():
             return None
         scalar = root[0]
-        if scalar.tag not in {"true", "false", "integer", "real"} or len(scalar) or (scalar.tail or "").strip():
+        if scalar.tag not in {"true", "false", "integer", "real", "string"} or len(scalar) or (scalar.tail or "").strip():
             return None
         if scalar.tag in {"true", "false"} and (scalar.text or "").strip():
             return None
@@ -117,21 +121,58 @@ def _plist_delay(text: str) -> Value:
     return int(value) if value == int(value) else value
 
 
-def _launchd_remote_login(text: str) -> Value:
-    """An explicit SSH enable/disable override, not daemon activity or absence."""
-    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
-    if len(lines) < 2 or lines[0] != "disabled services = {" or lines[-1] != "}":
+def _update_schedule(text: str) -> Value:
+    return {"Automatic check is on": True, "Automatic check is off": False}.get(text.strip())
+
+
+def _boolean(value: Any) -> Value:
+    if type(value) is bool:
+        return value
+    if type(value) is int and value in (0, 1):
+        return bool(value)
+    return None
+
+
+def _numeric_delay(value: Any) -> Value:
+    if type(value) not in (int, float) or not 0 <= value <= 2_147_483_647:
         return None
-    matches = []
-    for line in lines[1:-1]:
-        entry = re.fullmatch(r'"([^"\r\n]+)"\s*=>\s*(true|false|enabled|disabled)', line)
-        if entry is None:
-            return None
-        if entry[1] == "com.openssh.sshd":
-            matches.append(entry[2])
-    if len(matches) != 1:
+    if not math.isfinite(value):
         return None
-    return {"true": False, "disabled": False, "false": True, "enabled": True}[matches[0]]
+    return int(value) if value == int(value) else value
+
+
+def _preference_payload(text: str) -> dict[str, Any] | None:
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate native observation")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError("Nonfinite native observation")
+
+    if len(text) > 8192:
+        return None
+    try:
+        value = json.loads(text, object_pairs_hook=unique, parse_constant=invalid_constant)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(value, dict) or type(value.get("available")) is not bool:
+        return None
+    if type(value.get("managed")) is not bool or type(value.get("managed_available")) is not bool:
+        return None
+    for key in ("value", "explicit_current_host", "explicit_any_host", "machine_current_host", "machine_any_host"):
+        scalar = value.get(key)
+        if scalar is not None:
+            if type(scalar) not in (bool, int, float):
+                return None
+            if type(scalar) is int and not -(2**63) <= scalar < 2**63:
+                return None
+            if type(scalar) is float and not math.isfinite(scalar):
+                return None
+    return value
 
 
 def _invoking_user_home() -> Path | None:
@@ -158,8 +199,15 @@ class _Query:
 
 _SOFTWARE_UPDATE = "/Library/Preferences/com.apple.SoftwareUpdate"
 _SCREENSAVER = "com.apple.screensaver"
-_MACHINE_PREFERENCE = "explicit machine preference; effective MDM policy is not verified"
-_USER_PREFERENCE = "invoking user's explicit screen saver preference; effective/ByHost/MDM policy is not verified"
+_MACHINE_PREFERENCE = "explicit configured machine preference; effective MDM policy is not verified"
+_USER_PREFERENCE = "invoking user's explicit configured screen saver preference; effective/ByHost/MDM policy is not verified"
+_PREFERENCE_HELPER = str(Path(__file__).with_name("_macos_preferences.py").resolve())
+_PRIVILEGE_REQUIRED = "Unavailable: native query requires additional local privileges."
+_ELEVATED_READ_COMMANDS = frozenset({
+    ("/usr/sbin/systemsetup", "-getremotelogin"),
+    ("/usr/sbin/systemsetup", "-getusingnetworktime"),
+    ("/usr/sbin/softwareupdate", "--schedule"),
+})
 
 _QUERIES = (
     _Query("filevault", "enabled", ("/usr/bin/fdesetup", "status"), _filevault),
@@ -188,23 +236,7 @@ def _plist_query(query: _Query, path: Path, key: str) -> _Query:
 
 def _fallback_queries(query: _Query) -> tuple[_Query, ...]:
     if query.source == "update_check":
-        # MAC-005 explicitly requires this key. softwareupdate --schedule may
-        # resolve an OS default and cannot establish that the key was set.
         return (_plist_query(query, Path(_SOFTWARE_UPDATE + ".plist"), "AutomaticCheckEnabled"),)
-    if query.source == "remote_login":
-        return (_Query(
-            query.source, query.key, ("/bin/launchctl", "print-disabled", "system"),
-            _launchd_remote_login,
-            "explicit com.openssh.sshd launchd enable/disable override; service activity is not assessed",
-        ),)
-    if query.source == "network_time":
-        timed = _Query(
-            query.source, query.key,
-            ("/usr/bin/defaults", "read", "/Library/Preferences/com.apple.timed", "TMAutomaticTimeOnlyEnabled"),
-            _preference,
-            "explicit machine automatic-time preference; successful synchronization and MDM enforcement are not verified",
-        )
-        return (timed, _plist_query(timed, Path("/Library/Preferences/com.apple.timed.plist"), "TMAutomaticTimeOnlyEnabled"))
     if query.source in {"screen_lock", "screen_lock_delay"}:
         home = _invoking_user_home()
         if home is not None:
@@ -213,11 +245,11 @@ def _fallback_queries(query: _Query) -> tuple[_Query, ...]:
 
 
 _UNAVAILABLE_HINTS = {
-    "update_check": "AutomaticCheckEnabled must be explicitly readable; an absent key is not an enabled default.",
-    "remote_login": "Remote Login needs a readable systemsetup status or an explicit com.openssh.sshd override; a missing launchd entry is unknown.",
-    "screen_lock": "askForPassword must be explicitly readable for the invoking user; other users, ByHost settings and effective lock policy are outside this control.",
-    "screen_lock_delay": "askForPasswordDelay must be explicitly readable for the invoking user; an absent delay is not zero.",
-    "network_time": "Network time needs a readable systemsetup status or explicit TMAutomaticTimeOnlyEnabled preference; a running timed service is insufficient.",
+    "update_check": "Automatic update checking needs a native schedule status or a resolved machine preference; absence is not an enabled default.",
+    "remote_login": "Remote Login needs a native status or consistent launchd registration, override and service-definition evidence; absence alone is unknown.",
+    "screen_lock": "The invoking user's password requirement could not be resolved through native preferences; no other user's settings were read.",
+    "screen_lock_delay": "The invoking user's effective password delay could not be established; an absent delay is not zero.",
+    "network_time": "Automatic network time needs a native status or verified enforced machine policy; a timed preference or running service alone is insufficient.",
 }
 
 
@@ -229,9 +261,13 @@ class MacOSCollector:
     a real collection on another platform raises MacOSCollectionError.
     """
 
-    def __init__(self, runner: Runner | None = None) -> None:
+    def __init__(self, runner: Runner | None = None, *, allow_elevated_read: bool = False) -> None:
+        if type(allow_elevated_read) is not bool:
+            raise TypeError("allow_elevated_read must be an explicit Boolean.")
         self._runner = runner if runner is not None else subprocess.run
+        self._allow_elevated_read = allow_elevated_read
         self._native_platform = runner is not None or platform.system() == "Darwin"
+        self._command_cache: dict[tuple[str, ...], tuple[Any, str | None]] = {}
 
     @staticmethod
     def _unknown(query: _Query, reason: str) -> dict[str, Any]:
@@ -242,13 +278,15 @@ class MacOSCollector:
             "_scope": query.scope,
         }
 
-    def _run_query(self, query: _Query) -> dict[str, Any]:
+    def _invoke(self, command: tuple[str, ...]) -> tuple[Any, str | None]:
+        if command in self._command_cache:
+            return self._command_cache[command]
         # Native tools emit stable English status text in the C locale. Preserve
         # the process environment without recording it or its values in reports.
         command_env = dict(os.environ, LC_ALL="C", LANG="C")
         try:
             result = self._runner(
-                list(query.command),
+                list(command),
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
                 text=True,
@@ -258,21 +296,35 @@ class MacOSCollector:
                 env=command_env,
             )
         except subprocess.TimeoutExpired:
-            return self._unknown(query, "Unavailable: read-only command timed out after 10 seconds.")
+            answer = (None, "Unavailable: read-only command timed out after 10 seconds.")
         except PermissionError:
-            return self._unknown(query, "Unavailable: native query requires additional local privileges.")
+            answer = (None, _PRIVILEGE_REQUIRED)
         except OSError:
-            return self._unknown(query, "Unavailable: native command could not be executed.")
+            answer = (None, "Unavailable: native command could not be executed.")
+        else:
+            combined = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+            privilege_markers = (
+                "administrator access", "must be run as root", "requires root",
+                "must be root", "must run as root", "must have root privileges",
+                "permission denied", "operation not permitted", "not authorized",
+                "not privileged", "access denied", "requires administrator",
+                "requires full disk access", "authentication required",
+            )
+            sudo_denials = (
+                "a password is required", "a terminal is required", "no tty present",
+                "not in the sudoers", "not allowed to execute", "may not run sudo",
+            )
+            denied = any(marker in combined for marker in privilege_markers)
+            denied = denied or (command[0] == "/usr/bin/sudo" and any(marker in combined for marker in sudo_denials))
+            reason = _PRIVILEGE_REQUIRED if denied else None
+            answer = (None, reason) if reason else (result, None)
+        self._command_cache[command] = answer
+        return answer
 
-        combined = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
-        privilege_markers = (
-            "administrator access", "must be run as root", "requires root",
-            "permission denied", "operation not permitted", "not authorized",
-            "not privileged", "access denied", "requires administrator",
-            "requires full disk access",
-        )
-        if any(marker in combined for marker in privilege_markers):
-            return self._unknown(query, "Unavailable: native query requires additional local privileges.")
+    def _run_query(self, query: _Query) -> dict[str, Any]:
+        result, reason = self._invoke(query.command)
+        if reason:
+            return self._unknown(query, reason)
 
         if result.returncode != 0:
             if query.command[0] in {"/usr/bin/defaults", "/usr/bin/plutil"}:
@@ -299,7 +351,7 @@ class MacOSCollector:
             "_scope": query.scope,
         }
 
-    def _collect_query(self, query: _Query) -> dict[str, Any]:
+    def _collect_configured(self, query: _Query) -> dict[str, Any]:
         primary = self._run_query(query)
         if primary["_collection_ok"] or query.source not in _UNAVAILABLE_HINTS:
             return primary
@@ -315,9 +367,197 @@ class MacOSCollector:
             failures.append("Unavailable: invoking user's home could not be resolved safely for an exact plist read.")
         return self._unknown(query, "Unavailable: " + _UNAVAILABLE_HINTS[query.source] + " " + " ".join(failures))
 
+    def _preferences(self, domain: str, key: str) -> tuple[dict[str, Any] | None, str]:
+        command = (sys.executable, _PREFERENCE_HELPER, domain, key)
+        result, reason = self._invoke(command)
+        if reason:
+            return None, reason
+        if result.returncode != 0 or (result.stderr or "").strip():
+            return None, "Unavailable: native preference probe failed or reported a diagnostic."
+        payload = _preference_payload(result.stdout or "")
+        reason = "Unavailable: native preference resolution returned no reliable scalar."
+        if payload is not None and payload.get("available") is False:
+            known_reasons = {
+                "unsupported-query", "unsupported-platform", "ambiguous-user-context",
+                "missing-or-unreadable-effective-value", "native-preference-read-unavailable",
+            }
+            native_reason = payload.get("reason")
+            if type(native_reason) is str and native_reason in known_reasons:
+                reason += " Probe reason: " + native_reason + "."
+            return None, reason
+        return payload, reason
+
+    @staticmethod
+    def _effective(query: _Query, value: Value, scope: str, configured: dict | None = None) -> dict[str, Any]:
+        summary = str(value).lower() if isinstance(value, bool) else str(value)
+        if configured is not None:
+            explicit = configured.get(query.key) if configured.get("_collection_ok") else None
+            explicit_text = str(explicit).lower() if isinstance(explicit, bool) else str(explicit)
+            scope += f"; explicit configured value={explicit_text}" if explicit is not None else "; explicit any-host value unavailable"
+        return {query.key: value, "_collection_ok": True, "_raw": f"{query.source}.{query.key}={summary}; {scope}", "_scope": scope}
+
+    def _unavailable_effective(self, query: _Query, reason: str) -> dict[str, Any]:
+        result = self._unknown(query, "Unavailable: " + _UNAVAILABLE_HINTS[query.source] + " " + reason)
+        result["_scope"] = "unavailable effective local state"
+        return result
+
+    def _optional_elevated_status(self, query: _Query, normal: dict[str, Any]) -> dict[str, Any] | None:
+        """Retry only an opted-in, denied getter after normal sources fail.
+
+        No caller-supplied command or preference probe can reach sudo. -n and
+        closed stdin prohibit a password prompt; no credentials are collected.
+        Once an elevated retry fails, that control stays ERROR.
+        """
+        if not self._allow_elevated_read or query.command not in _ELEVATED_READ_COMMANDS:
+            return None
+        if normal.get("_collection_ok") or normal.get("_raw") != _PRIVILEGE_REQUIRED:
+            return None
+        command = ("/usr/bin/sudo", "-n", "--", *query.command)
+        elevated = self._run_query(_Query(query.source, query.key, command, query.parser))
+        if elevated["_collection_ok"]:
+            return self._effective(
+                query, elevated[query.key],
+                "effective system state via explicit sudo -n read of " + " ".join(query.command)
+                + "; only this status command is elevated; user preferences retain the invoking user",
+            )
+        failure = elevated["_raw"]
+        if "timed out" in failure:
+            detail = "the noninteractive status read timed out after 10 seconds"
+        elif "could not be executed" in failure:
+            detail = "sudo or the allowlisted status command is unavailable or could not be executed"
+        elif "unrecognized or ambiguous" in failure:
+            detail = "the elevated command returned unrecognized or ambiguous status output"
+        elif "reported a diagnostic" in failure:
+            detail = "the elevated command reported a diagnostic; its status is inconclusive"
+        else:
+            detail = "the noninteractive status read was denied or failed; approved sudo access may be unavailable or the native read may still require privileges"
+        return self._unavailable_effective(
+            query, "Explicit elevated read failed: " + detail + ". No password was requested and no setting was changed.",
+        )
+
+    def _machine_policy(self, query: _Query, domain: str, key: str, payload: dict | None) -> Value:
+        if not payload or payload.get("managed_available") is not True or payload.get("managed") is not True:
+            return None
+        # A current-user suite value alone cannot establish a daemon's machine
+        # policy. Require the matching managed machine key as independent scope.
+        policy = _plist_query(query, Path("/Library/Managed Preferences") / (domain + ".plist"), key)
+        observation = self._run_query(policy)
+        value = _boolean(payload.get("value"))
+        return value if observation["_collection_ok"] and observation[query.key] is value else None
+
+    def _effective_update_check(self, query: _Query) -> dict[str, Any]:
+        configured = self._collect_configured(query)
+        status_query = _Query(query.source, query.key, ("/usr/sbin/softwareupdate", "--schedule"), _update_schedule)
+        status = self._run_query(status_query)
+        payload, reason = self._preferences("com.apple.SoftwareUpdate", "AutomaticCheckEnabled")
+        resolved = self._machine_policy(query, "com.apple.SoftwareUpdate", "AutomaticCheckEnabled", payload)
+        if resolved is None and payload and payload.get("managed_available") is True and payload.get("managed") is False:
+            machine = payload.get("machine_current_host")
+            if machine is None:
+                machine = payload.get("machine_any_host")
+            machine = _boolean(machine)
+            if machine is not None and machine is _boolean(payload.get("value")):
+                resolved = machine
+        if status["_collection_ok"] and resolved is not None and status[query.key] is not resolved:
+            return self._unavailable_effective(query, "Native schedule status and resolved machine configuration disagree.")
+        if status["_collection_ok"]:
+            return self._effective(query, status[query.key], "effective machine state via softwareupdate --schedule", configured)
+        if resolved is not None:
+            return self._effective(query, resolved, "effective resolved machine preference via CoreFoundation", configured)
+        elevated = self._optional_elevated_status(status_query, status)
+        if elevated is not None:
+            if elevated["_collection_ok"]:
+                return self._effective(query, elevated[query.key], elevated["_scope"], configured)
+            return elevated
+        return self._unavailable_effective(query, status["_raw"] + " " + reason)
+
+    def _effective_screen_lock(self, query: _Query) -> dict[str, Any]:
+        payload, reason = self._preferences(_SCREENSAVER, query.command[-1])
+        parser = _numeric_delay if query.source == "screen_lock_delay" else _boolean
+        value = None if payload is None else parser(payload.get("value"))
+        if value is None:
+            return self._unavailable_effective(query, reason)
+        # Exact configured values come from the same guarded native helper.
+        # Do not invoke user-domain defaults before its identity/home checks.
+        explicit = parser(payload.get("explicit_any_host"))
+        configured = {query.key: explicit, "_collection_ok": explicit is not None}
+        highest = payload.get("explicit_current_host")
+        if highest is None:
+            highest = payload.get("explicit_any_host")
+        managed = payload.get("managed_available") is True and payload.get("managed") is True
+        if highest is not None and not managed and (parser(highest) is None or parser(highest) != value):
+            return self._unavailable_effective(query, "Resolved and highest-priority configured preferences disagree without a verified managed override.")
+        # MAC-011 independently compares a known delay against zero. Password
+        # enforcement is MAC-010; do not introduce an extra baseline condition.
+        kind = "managed" if managed else "current-user/ByHost resolved"
+        return self._effective(query, value, f"invoking user's effective {kind} preference via CoreFoundation; runtime lock/unlock is not exercised", configured)
+
+    def _effective_remote_login(self, query: _Query) -> dict[str, Any]:
+        status = self._run_query(query)
+        if status["_collection_ok"]:
+            return self._effective(query, status[query.key], "effective system state via systemsetup -getremotelogin")
+        overrides, override_error = self._invoke(("/bin/launchctl", "print-disabled", "system"))
+        service, service_error = self._invoke(("/bin/launchctl", "print", "system/com.openssh.sshd"))
+        definition = Path("/System/Library/LaunchDaemons/ssh.plist")
+        label = self._run_query(_Query(query.source, query.key, ("/usr/bin/plutil", "-extract", "Label", "xml1", "-o", "-", str(definition)), lambda text: True if _plist_value(text) == "com.openssh.sshd" else None))
+        disabled = self._run_query(_plist_query(query, definition, "Disabled"))
+        if override_error or service_error or overrides.returncode != 0 or (overrides.stderr or "").strip():
+            elevated = self._optional_elevated_status(query, status)
+            if elevated is not None:
+                return elevated
+            return self._unavailable_effective(query, override_error or service_error or status["_raw"])
+        value = resolve_remote_login(overrides.stdout or "", service.stdout or "", service.stderr or "", service.returncode,
+                                     "com.openssh.sshd" if label["_collection_ok"] else None,
+                                     disabled[query.key] if disabled["_collection_ok"] else None)
+        if value is None:
+            valid_map, enabled_override = parse_override_map(overrides.stdout or "")
+            service_state = parse_service(service.stdout or "", service.stderr or "", service.returncode)
+            contradictory = valid_map and (
+                (enabled_override is False and service_state == "registered")
+                or (enabled_override is True and service_state == "absent")
+            )
+            # A stronger privilege level must not turn conflicting known SSH
+            # state into a secure assumption. Retry only an unresolved read.
+            if not contradictory:
+                elevated = self._optional_elevated_status(query, status)
+                if elevated is not None:
+                    return elevated
+            stages = f" Override map={'valid' if valid_map else 'unknown'}; service={service_state}; definition label={'matched' if label['_collection_ok'] else 'unavailable'}; disabled default={'known' if disabled['_collection_ok'] else 'unavailable'}."
+            return self._unavailable_effective(query, status["_raw"] + " Launchd evidence is incomplete, unsupported or contradictory." + stages)
+        return self._effective(query, value, "effective launchd service configuration; override map, registration and actual service definition checked")
+
+    def _effective_network_time(self, query: _Query) -> dict[str, Any]:
+        status = self._run_query(query)
+        payload, reason = self._preferences("com.apple.timed", "TMAutomaticTimeOnlyEnabled")
+        policy = self._machine_policy(query, "com.apple.timed", "TMAutomaticTimeOnlyEnabled", payload)
+        # This key enforces automatic time when true. False/unforced is not a
+        # report that automatic time is off, so it cannot become FAIL or PASS.
+        if policy is True and status["_collection_ok"] and status[query.key] is False:
+            return self._unavailable_effective(query, "Native time status contradicts the enforced machine automatic-time policy.")
+        if status["_collection_ok"]:
+            return self._effective(query, status[query.key], "effective system state via systemsetup -getusingnetworktime; synchronization success is not verified")
+        if policy is True:
+            return self._effective(query, True, "effective enforced machine automatic-time policy verified with CoreFoundation and managed machine preference; synchronization success is not verified")
+        elevated = self._optional_elevated_status(query, status)
+        if elevated is not None:
+            return elevated
+        return self._unavailable_effective(query, status["_raw"] + " " + reason + " An unforced or false enforcement preference does not determine automatic-time state.")
+
+    def _collect_query(self, query: _Query) -> dict[str, Any]:
+        if query.source == "update_check":
+            return self._effective_update_check(query)
+        if query.source in {"screen_lock", "screen_lock_delay"}:
+            return self._effective_screen_lock(query)
+        if query.source == "remote_login":
+            return self._effective_remote_login(query)
+        if query.source == "network_time":
+            return self._effective_network_time(query)
+        return self._run_query(query)
+
     def collect(self) -> dict[str, Any]:
         if not self._native_platform:
             raise MacOSCollectionError("Local macOS collection requires macOS; use --demo for sample evidence.")
+        self._command_cache.clear()
         return {
             "target_name": platform.node() or "Unknown (local macOS host)",
             "platform": "macOS",
@@ -326,8 +566,10 @@ class MacOSCollector:
                 "mode": "local",
                 "read_only": True,
                 "profile": "macos",
-                "scope": "Authorized local Mac; current-user preferences refer to the invoking user only.",
-                "limitations": "Explicit preferences do not prove effective MDM policy. No automatic privilege elevation. Unknown values are ERROR.",
+                "scope": "Authorized local Mac; effective current-user preference resolution refers to the invoking user only.",
+                "limitations": "Effective configuration is distinguished from explicit stored values; runtime lock and time synchronization success are not verified. "
+                + ("Explicit elevated-read opt-in permits sudo -n only for denied, otherwise unresolved allowlisted status reads; no password prompt. " if self._allow_elevated_read else "Elevated reads are disabled. ")
+                + "Unknown or contradictory values are ERROR.",
                 "evidence_policy": "Allowlisted status summaries only; no unrestricted command output is retained.",
             },
             "evidence": {query.source: self._collect_query(query) for query in _QUERIES},

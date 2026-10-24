@@ -240,3 +240,81 @@ def test_complete_legacy_console_output_is_preserved(tmp_path):
     assert result.returncode == 0
     normalized = re.sub(r'^(JSON|HTML) report: .+$', r'\1 report: <generated path>', result.stdout, flags=re.M)
     assert normalized == expected
+
+
+@pytest.mark.parametrize('selection', [
+    ['--profile', 'macos', '--local'],
+    ['--local'],
+    ['--auto-detect'],
+    ['--auto-detect', '--local'],
+])
+def test_elevated_read_opt_in_reaches_only_local_macos_collector(monkeypatch, tmp_path, capsys, selection):
+    calls = []
+
+    class FakeMac:
+        def __init__(self, **options):
+            calls.append(options)
+
+        def collect(self):
+            return get_profile('macos').load_demo()
+
+    monkeypatch.setattr('cyberassess.collectors.macos.MacOSCollector', FakeMac)
+    monkeypatch.setattr(cli, 'detect_local_profile', lambda: 'macos')
+    assert cli.main([*selection, '--allow-elevated-read', '--output', str(tmp_path)]) == 0
+    assert calls == [{'allow_elevated_read': True}]
+    report = read_report(tmp_path)
+    assert report['profile']['id'] == 'macos'
+    assert report['assessment_mode'] == 'local'
+    assert 'Elevated reads: enabled (noninteractive sudo -n; read-only status queries)' in capsys.readouterr().out
+
+
+def test_normal_local_macos_does_not_enable_elevated_reads(monkeypatch, tmp_path, capsys):
+    calls = []
+
+    class FakeMac:
+        def __init__(self, **options):
+            calls.append(options)
+
+        def collect(self):
+            return get_profile('macos').load_demo()
+
+    monkeypatch.setattr('cyberassess.collectors.macos.MacOSCollector', FakeMac)
+    monkeypatch.setattr(cli, 'detect_local_profile', lambda: 'macos')
+    assert cli.main(['--profile', 'macos', '--local', '--output', str(tmp_path)]) == 0
+    assert calls == [{}]
+    assert 'Elevated reads: enabled' not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('arguments,detected', [
+    ([], 'macos'),
+    (['--demo'], 'macos'),
+    (['--profile', 'macos', '--demo'], 'macos'),
+    (['--profile', 'macos'], 'macos'),
+    (['--profile', 'windows', '--local'], 'windows'),
+    (['--profile', 'ubuntu', '--local'], 'ubuntu'),
+    (['--auto-detect'], 'windows'),
+    (['--auto-detect'], 'ubuntu'),
+    (['--profile', 'ubuntu', '--host', 'host', '--user', 'auditor', '--key', '/key'], 'ubuntu'),
+    (['--host', 'host', '--user', 'auditor', '--key', '/key'], 'macos'),
+    (['--list-profiles'], 'macos'),
+    (['--list-profiles', '--local'], 'macos'),
+])
+def test_elevated_read_invalid_modes_fail_before_any_collection(monkeypatch, tmp_path, capsys, arguments, detected):
+    monkeypatch.setattr(cli, 'detect_local_profile', lambda: detected)
+    monkeypatch.setattr(cli, '_collect_profile', lambda *args: pytest.fail('Invalid opt-in must not collect'))
+    monkeypatch.setattr(cli, '_run_legacy', lambda *args: pytest.fail('Invalid opt-in must not run legacy collection'))
+    with pytest.raises(SystemExit) as error:
+        cli.main([*arguments, '--allow-elevated-read', '--output', str(tmp_path)])
+    assert error.value.code == 2
+    assert '--allow-elevated-read' in capsys.readouterr().err
+    assert not list(tmp_path.iterdir())
+
+
+def test_help_describes_explicit_noninteractive_read_only_elevation():
+    result = invoke('--help')
+    assert result.returncode == 0
+    text = ' '.join(result.stdout.split())
+    assert '--allow-elevated-read' in text
+    assert 'noninteractive sudo -n' in text
+    assert 'read-only macOS status queries' in text
+    assert 'never prompts for passwords or changes settings' in text

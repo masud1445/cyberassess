@@ -179,13 +179,20 @@ The profile covers all Domain/Private/Public firewall profiles, the OS volume's 
 
 ### macOS
 
-Use native macOS and its installed `fdesetup`, Application Firewall `socketfilterfw`, `csrutil`, `spctl`, `defaults`, `plutil`, `launchctl` and `systemsetup` tools. Collection is local and read-only, with no automatic `sudo` or privilege prompt. `systemsetup` Remote Login and network-time queries commonly require administrator/root access. The collector tries an explicit launchd SSH override and explicit automatic-time preferences when those reads fail; unavailable evidence still remains ERROR.
+Use native macOS and its installed `fdesetup`, Application Firewall `socketfilterfw`, `csrutil`, `spctl`, `defaults`, `plutil`, `launchctl`, `softwareupdate` and `systemsetup` tools. Public CoreFoundation preference reads use Python's standard library in a bounded helper; no PyObjC dependency is needed. Collection is local and read-only. Normal mode never invokes sudo or prompts for privileges. Consistent launchd evidence can resolve Remote Login without elevation, and scoped native machine preferences or verified enforced policy can establish some update/time settings. Unavailable evidence remains ERROR.
 
 ```bash
-.venv/bin/python main.py --profile macos --local --output reports/macos-local
+.venv/bin/python main.py --profile macos --local --output reports/macos-read-only
+
+# Optional, explicitly authorized elevated status reads:
+.venv/bin/python main.py --profile macos --local --allow-elevated-read --output reports/macos-elevated-read
 ```
 
-The screen-saver checks read the **invoking user's explicit preferences**. They do not resolve ByHost, effective runtime or MDM policy; update checks similarly inspect explicit machine preferences rather than asserting effective managed policy. Exact-key plist extraction provides a second read path, without inventing missing values. Missing preference keys are unavailable evidence. Running the entire application as root changes the user scope and is not a general fix for errors. Agree on the user scope with the owner, record inaccessible privileged checks, and avoid blanket elevation just to improve coverage. See [macOS live collection troubleshooting](macos-live-collection.md) for the five affected controls and Tahoe acceptance checks. Native release/architecture compatibility remains subject to acceptance on the receiving machine.
+The screen-lock checks resolve the **invoking user's effective preferences**, including applicable ByHost and managed precedence, and record explicit configured values separately. NULL/invalid native values remain unavailable; absent keys never imply secure defaults. Automatic update checking uses native status or scoped resolved machine preferences; the other update-installation checks retain explicit configuration scope. Running the whole app as root changes the user scope and is not a general fix. Agree on scope with the owner and retain inaccessible evidence. See [macOS live collection troubleshooting](macos-live-collection.md) for the exact new validation command and limitations. Native release/architecture compatibility still requires acceptance on the receiving Mac.
+
+`--allow-elevated-read` applies only to native local macOS collection, including matching auto-detection. It permits noninteractive `sudo -n --` for exactly `/usr/sbin/systemsetup -getremotelogin`, `/usr/sbin/systemsetup -getusingnetworktime` and `/usr/sbin/softwareupdate --schedule`, with no setting argument. The collector first tries reliable unprivileged sources, then retries only a recognized permission-denied status that remains unresolved. All retries use closed stdin and a ten-second timeout. User/ByHost/managed preference resolution remains in the invoking user's unelevated context.
+
+Arrange an existing approved noninteractive authorization or valid sudo credential cache with the administrator before using the optional mode. CyberAssess does not request a password, establish a cache, modify sudoers, grant privileges or change system settings. If elevation is missing, expired or denied, the affected evidence remains ERROR with a sanitized reason. No write or remediation command is part of the allowlist. A known numeric MAC-011 delay is evaluated independently by its unchanged control; it does not establish that MAC-010 password enforcement is enabled.
 
 ### Remote operator sessions
 

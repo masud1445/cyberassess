@@ -10,7 +10,7 @@ The project remains aligned with **Internship Pillar 2 / Sub-Track 2.1: Automate
 | --- | ---: | --- | --- |
 | `ubuntu` | 15 | Existing SSH collector, or local Ubuntu collector | Original Ubuntu baseline: SSH, firewall, permissions, accounts, password policy, logging, updates, time and Telnet |
 | `windows` | 13 | Native local Windows only | Defender, firewall profiles, BitLocker, RDP/NLA, Guest, UAC, SMBv1 server, inactivity policy, Secure Boot and Event Log |
-| `macos` | 12 | Native local macOS only | FileVault, firewall, SIP, Gatekeeper, explicit update preferences, Remote Login, network time and current-user screen-saver preferences |
+| `macos` | 12 | Native local macOS only | FileVault, firewall, SIP, Gatekeeper, native update-check state, remaining explicit update preferences, Remote Login, network time and resolved current-user screen-lock preferences |
 
 Each profile maps checks to NIST SP 800-53 references. A profile is a limited baseline, not evidence of certification, a complete audit, or an effective-policy guarantee. Scores describe different control sets and must not be used as an OS ranking.
 
@@ -76,13 +76,18 @@ python main.py --profile ubuntu --local --output reports/ubuntu-local
 python main.py --profile windows --local --output reports/windows-local
 
 # On a native macOS target
-python main.py --profile macos --local --output reports/macos-local
+python main.py --profile macos --local --output reports/macos-read-only
+
+# Optional macOS-only noninteractive elevated status reads
+python main.py --profile macos --local --allow-elevated-read --output reports/macos-elevated-read
 
 # Select the current supported OS explicitly through detection
 python main.py --auto-detect --local --output reports/local
 ```
 
 `--local` also detects the current supported OS; `--auto-detect` implies local collection. Detection rejects unsupported operating systems. No collection occurs merely by listing profiles or requesting the version. Missing tools, permissions, unavailable settings and uninterpretable evidence must be reviewed as collection limitations; the tool does not automatically grant privileges, install assessment services, or fix the target.
+
+On macOS, normal mode never invokes sudo. `--allow-elevated-read` explicitly permits `sudo -n --` retries for only three read-only getters: `systemsetup -getremotelogin`, `systemsetup -getusingnetworktime` and `softwareupdate --schedule` without an `on`/`off` argument. Reliable unprivileged evidence is tried first; a retry is allowed only for recognized permission denial when the status remains unresolved. Existing approved noninteractive sudo authorization or a valid credential cache is required. CyberAssess never asks for a password, changes privilege configuration, elevates user-preference reads, changes settings or runs remediation. Missing, denied or ambiguous evidence remains ERROR. See [macOS collection and validation](docs/macos-live-collection.md) for exact commands and scope.
 
 The existing Ubuntu SSH workflow remains available from macOS, Linux or Windows:
 

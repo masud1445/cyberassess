@@ -94,6 +94,8 @@ def _collect_profile(profile_id: str, args: argparse.Namespace, mode: str) -> di
         return WindowsCollector().collect()
     if profile_id == "macos":
         from cyberassess.collectors.macos import MacOSCollector
+        if getattr(args, "allow_elevated_read", False):
+            return MacOSCollector(allow_elevated_read=True).collect()
         return MacOSCollector().collect()
     from cyberassess.collector import CollectionError
     raise CollectionError(f"No local collector is registered for profile '{profile_id}'.")
@@ -116,6 +118,9 @@ def _run_profile(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
             parser.error("The selected profile does not match this local platform.")
     except ValueError as exc:
         parser.error(str(exc))
+
+    if args.allow_elevated_read and (not local_mode or profile_id != "macos"):
+        parser.error("--allow-elevated-read is available only for a local macOS assessment.")
 
     if args.demo:
         mode = "demo"
@@ -142,6 +147,8 @@ def _run_profile(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
     print(f"Platform: {profile.platform}")
     print(f"Profile:  {profile.name} v{profile.version}")
     print(f"Mode:     {mode}")
+    if args.allow_elevated_read:
+        print("Elevated reads: enabled (noninteractive sudo -n; read-only status queries)")
     print(f"Controls: {control_count}")
     print()
     print("Assessment in progress...")
@@ -172,12 +179,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=22)
     parser.add_argument("--accept-new-host", action="store_true")
     parser.add_argument("--profile", choices=[profile.id for profile in list_profiles()], help="Select a versioned baseline")
-    parser.add_argument("--local", action="store_true", help="Read the matching local platform; never auto-elevates")
+    parser.add_argument("--local", action="store_true", help="Read the matching local platform; no implicit elevation")
+    parser.add_argument(
+        "--allow-elevated-read", action="store_true",
+        help="Allow noninteractive sudo -n for allowlisted read-only macOS status queries; never prompts for passwords or changes settings",
+    )
     parser.add_argument("--auto-detect", action="store_true", help="Detect and assess the supported local platform")
     parser.add_argument("--list-profiles", action="store_true", help="List baselines without collecting evidence")
     parser.add_argument("--version", action="version", version=f"CyberAssess {__version__}")
     parser.add_argument("--output", type=Path, metavar="DIRECTORY", help="Write JSON and self-contained HTML to this directory")
     args = parser.parse_args(argv)
+    if args.allow_elevated_read and (args.list_profiles or args.demo or not (args.local or args.auto_detect)):
+        parser.error("--allow-elevated-read requires a local macOS assessment; it cannot be used with demo, listing or SSH modes.")
     if args.list_profiles:
         print(f"CyberAssess {__version__} · Assessment profiles")
         try:
