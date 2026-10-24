@@ -179,13 +179,13 @@ The profile covers all Domain/Private/Public firewall profiles, the OS volume's 
 
 ### macOS
 
-Use native macOS and its installed `fdesetup`, Application Firewall `socketfilterfw`, `csrutil`, `spctl`, `defaults` and `systemsetup` tools. Collection is local and read-only, with no automatic `sudo` or privilege prompt. `systemsetup` Remote Login and network-time queries commonly require administrator/root access; expected permission errors must be recorded, not replaced with a favorable default.
+Use native macOS and its installed `fdesetup`, Application Firewall `socketfilterfw`, `csrutil`, `spctl`, `defaults`, `plutil`, `launchctl` and `systemsetup` tools. Collection is local and read-only, with no automatic `sudo` or privilege prompt. `systemsetup` Remote Login and network-time queries commonly require administrator/root access. The collector tries an explicit launchd SSH override and explicit automatic-time preferences when those reads fail; unavailable evidence still remains ERROR.
 
 ```bash
 .venv/bin/python main.py --profile macos --local --output reports/macos-local
 ```
 
-The screen-saver checks read the **invoking user's explicit preferences**. They do not resolve ByHost, effective runtime or MDM policy; update checks similarly inspect explicit machine preferences rather than asserting effective managed policy. Missing preference keys are unavailable evidence. Running the entire application as root changes the user scope and is not a general fix for errors. Agree on the user scope with the owner, record inaccessible privileged checks, and avoid blanket elevation just to improve coverage. Native release/architecture compatibility remains subject to acceptance on the receiving machine.
+The screen-saver checks read the **invoking user's explicit preferences**. They do not resolve ByHost, effective runtime or MDM policy; update checks similarly inspect explicit machine preferences rather than asserting effective managed policy. Exact-key plist extraction provides a second read path, without inventing missing values. Missing preference keys are unavailable evidence. Running the entire application as root changes the user scope and is not a general fix for errors. Agree on the user scope with the owner, record inaccessible privileged checks, and avoid blanket elevation just to improve coverage. See [macOS live collection troubleshooting](macos-live-collection.md) for the five affected controls and Tahoe acceptance checks. Native release/architecture compatibility remains subject to acceptance on the receiving machine.
 
 ### Remote operator sessions
 

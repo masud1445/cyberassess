@@ -9,11 +9,16 @@ summary, not an unrestricted dump of native command output.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import os
+from pathlib import Path
 import platform
+import plistlib
 import re
 import subprocess
 from typing import Any, Callable
+from xml.etree import ElementTree
+from xml.parsers.expat import ExpatError
 
 from cyberassess.collector import CollectionError
 
@@ -72,6 +77,76 @@ def _network_time(text: str) -> Value:
     return {"Network Time: On": True, "Network Time: Off": False}.get(text.strip())
 
 
+def _plist_value(text: str) -> Any:
+    """Parse only plutil's extracted XML scalar, never an entire preference dump."""
+    if len(text) > 4096:
+        return None
+    try:
+        value = plistlib.loads(text.encode("utf-8"), fmt=plistlib.FMT_XML)
+        # plistlib alone accepts multiple top-level scalars and even nested
+        # boolean elements, silently selecting a value. plutil must emit one
+        # scalar; malformed structures cannot establish security evidence.
+        root = ElementTree.fromstring(text)
+        if root.tag != "plist" or len(root) != 1 or (root.text or "").strip():
+            return None
+        scalar = root[0]
+        if scalar.tag not in {"true", "false", "integer", "real"} or len(scalar) or (scalar.tail or "").strip():
+            return None
+        if scalar.tag in {"true", "false"} and (scalar.text or "").strip():
+            return None
+        return value
+    except (ValueError, TypeError, OverflowError, ExpatError, ElementTree.ParseError):
+        return None
+
+
+def _plist_preference(text: str) -> Value:
+    value = _plist_value(text)
+    if type(value) is bool:
+        return value
+    if type(value) is int and value in (0, 1):
+        return bool(value)
+    return None
+
+
+def _plist_delay(text: str) -> Value:
+    value = _plist_value(text)
+    if type(value) not in (int, float):
+        return None
+    if not 0 <= value <= 2_147_483_647 or not math.isfinite(value):
+        return None
+    return int(value) if value == int(value) else value
+
+
+def _launchd_remote_login(text: str) -> Value:
+    """An explicit SSH enable/disable override, not daemon activity or absence."""
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if len(lines) < 2 or lines[0] != "disabled services = {" or lines[-1] != "}":
+        return None
+    matches = []
+    for line in lines[1:-1]:
+        entry = re.fullmatch(r'"([^"\r\n]+)"\s*=>\s*(true|false|enabled|disabled)', line)
+        if entry is None:
+            return None
+        if entry[1] == "com.openssh.sshd":
+            matches.append(entry[2])
+    if len(matches) != 1:
+        return None
+    return {"true": False, "disabled": False, "false": True, "enabled": True}[matches[0]]
+
+
+def _invoking_user_home() -> Path | None:
+    """Never substitute HOME, SUDO_USER, the console user, or another account."""
+    try:
+        import pwd  # POSIX only; importing the collector must remain portable.
+
+        if os.getuid() != os.geteuid():
+            return None
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (ImportError, AttributeError, KeyError, OSError):
+        return None
+    return home if home.is_absolute() and home != Path("/") else None
+
+
 @dataclass(frozen=True)
 class _Query:
     source: str
@@ -102,6 +177,50 @@ _QUERIES = (
 )
 
 
+def _plist_query(query: _Query, path: Path, key: str) -> _Query:
+    return _Query(
+        query.source, query.key,
+        ("/usr/bin/plutil", "-extract", key, "xml1", "-o", "-", str(path)),
+        _plist_delay if query.source == "screen_lock_delay" else _plist_preference,
+        query.scope + "; exact plist key extracted with plutil",
+    )
+
+
+def _fallback_queries(query: _Query) -> tuple[_Query, ...]:
+    if query.source == "update_check":
+        # MAC-005 explicitly requires this key. softwareupdate --schedule may
+        # resolve an OS default and cannot establish that the key was set.
+        return (_plist_query(query, Path(_SOFTWARE_UPDATE + ".plist"), "AutomaticCheckEnabled"),)
+    if query.source == "remote_login":
+        return (_Query(
+            query.source, query.key, ("/bin/launchctl", "print-disabled", "system"),
+            _launchd_remote_login,
+            "explicit com.openssh.sshd launchd enable/disable override; service activity is not assessed",
+        ),)
+    if query.source == "network_time":
+        timed = _Query(
+            query.source, query.key,
+            ("/usr/bin/defaults", "read", "/Library/Preferences/com.apple.timed", "TMAutomaticTimeOnlyEnabled"),
+            _preference,
+            "explicit machine automatic-time preference; successful synchronization and MDM enforcement are not verified",
+        )
+        return (timed, _plist_query(timed, Path("/Library/Preferences/com.apple.timed.plist"), "TMAutomaticTimeOnlyEnabled"))
+    if query.source in {"screen_lock", "screen_lock_delay"}:
+        home = _invoking_user_home()
+        if home is not None:
+            return (_plist_query(query, home / "Library/Preferences/com.apple.screensaver.plist", query.command[-1]),)
+    return ()
+
+
+_UNAVAILABLE_HINTS = {
+    "update_check": "AutomaticCheckEnabled must be explicitly readable; an absent key is not an enabled default.",
+    "remote_login": "Remote Login needs a readable systemsetup status or an explicit com.openssh.sshd override; a missing launchd entry is unknown.",
+    "screen_lock": "askForPassword must be explicitly readable for the invoking user; other users, ByHost settings and effective lock policy are outside this control.",
+    "screen_lock_delay": "askForPasswordDelay must be explicitly readable for the invoking user; an absent delay is not zero.",
+    "network_time": "Network time needs a readable systemsetup status or explicit TMAutomaticTimeOnlyEnabled preference; a running timed service is insufficient.",
+}
+
+
 class MacOSCollector:
     """Collect fixed native queries on an authorized local Mac.
 
@@ -123,7 +242,7 @@ class MacOSCollector:
             "_scope": query.scope,
         }
 
-    def _collect_query(self, query: _Query) -> dict[str, Any]:
+    def _run_query(self, query: _Query) -> dict[str, Any]:
         # Native tools emit stable English status text in the C locale. Preserve
         # the process environment without recording it or its values in reports.
         command_env = dict(os.environ, LC_ALL="C", LANG="C")
@@ -140,6 +259,8 @@ class MacOSCollector:
             )
         except subprocess.TimeoutExpired:
             return self._unknown(query, "Unavailable: read-only command timed out after 10 seconds.")
+        except PermissionError:
+            return self._unknown(query, "Unavailable: native query requires additional local privileges.")
         except OSError:
             return self._unknown(query, "Unavailable: native command could not be executed.")
 
@@ -147,12 +268,14 @@ class MacOSCollector:
         privilege_markers = (
             "administrator access", "must be run as root", "requires root",
             "permission denied", "operation not permitted", "not authorized",
+            "not privileged", "access denied", "requires administrator",
+            "requires full disk access",
         )
         if any(marker in combined for marker in privilege_markers):
             return self._unknown(query, "Unavailable: native query requires additional local privileges.")
 
         if result.returncode != 0:
-            if query.command[0] == "/usr/bin/defaults":
+            if query.command[0] in {"/usr/bin/defaults", "/usr/bin/plutil"}:
                 reason = "Unavailable: explicit preference could not be read; no default was inferred."
             else:
                 reason = "Unavailable: native command returned a nonzero exit status."
@@ -175,6 +298,22 @@ class MacOSCollector:
             "_raw": f"{query.source}.{query.key}={summary}; {query.scope}",
             "_scope": query.scope,
         }
+
+    def _collect_query(self, query: _Query) -> dict[str, Any]:
+        primary = self._run_query(query)
+        if primary["_collection_ok"] or query.source not in _UNAVAILABLE_HINTS:
+            return primary
+        failures = [primary["_raw"]]
+        fallbacks = _fallback_queries(query)
+        for fallback in fallbacks:
+            result = self._run_query(fallback)
+            if result["_collection_ok"]:
+                return result
+            if result["_raw"] not in failures:
+                failures.append(result["_raw"])
+        if not fallbacks and query.source in {"screen_lock", "screen_lock_delay"}:
+            failures.append("Unavailable: invoking user's home could not be resolved safely for an exact plist read.")
+        return self._unknown(query, "Unavailable: " + _UNAVAILABLE_HINTS[query.source] + " " + " ".join(failures))
 
     def collect(self) -> dict[str, Any]:
         if not self._native_platform:

@@ -1,12 +1,17 @@
 """Fixture-based native-query validation; these tests do not assess a live Mac."""
 
 import json
+import os
 from pathlib import Path
+import plistlib
 import subprocess
+import sys
+from types import SimpleNamespace
 
 import pytest
 
 from cyberassess.collectors.macos import MacOSCollectionError, MacOSCollector
+from cyberassess.collectors import macos
 from cyberassess.evaluator import evaluate_baseline
 
 
@@ -30,6 +35,10 @@ def native_output(command):
         return "Network Time: On\n"
     if command[-1] == "askForPasswordDelay":
         return "0\n"
+    if command[0] in {"/usr/bin/plutil", "/bin/launchctl"} or command[-1] == "TMAutomaticTimeOnlyEnabled":
+        # These older fixtures supply no fallback evidence. Do not invent it
+        # with the generic '1' used for the original explicit preferences.
+        return ""
     return "1\n"
 
 
@@ -199,3 +208,232 @@ def test_missing_hostname_is_explicitly_unknown(monkeypatch):
     monkeypatch.setattr('cyberassess.collectors.macos.platform.node', lambda: '')
     bundle = MacOSCollector(runner=runner_with_override()).collect()
     assert bundle['target_name'] == 'Unknown (local macOS host)'
+
+
+def extracted_plist(value):
+    return plistlib.dumps(value, fmt=plistlib.FMT_XML).decode("utf-8")
+
+
+def fallback_runner(replacements=None, *, calls=None):
+    """Five failed legacy reads; only explicitly supplied fallback evidence."""
+    replacements = replacements or {}
+
+    def run(command, **options):
+        if calls is not None:
+            calls.append((command, options))
+        if command[0] == "/usr/bin/plutil":
+            name = command[2]
+        elif command[:2] == ["/bin/launchctl", "print-disabled"]:
+            name = "launchd"
+        elif command[-1] == "TMAutomaticTimeOnlyEnabled":
+            name = "timed"
+        else:
+            name = None
+        if name is not None:
+            response = replacements.get(name)
+            if isinstance(response, Exception):
+                raise response
+            if isinstance(response, tuple):
+                code, stdout, stderr = response
+                return subprocess.CompletedProcess(command, code, stdout, stderr)
+            return subprocess.CompletedProcess(command, 0 if response is not None else 1, response or "", "")
+        if command[-1] in {"AutomaticCheckEnabled", "askForPassword", "askForPasswordDelay"}:
+            return subprocess.CompletedProcess(command, 1, "", "Domain/default pair does not exist /Users/private")
+        if command[-1] in {"-getremotelogin", "-getusingnetworktime"}:
+            return subprocess.CompletedProcess(command, 1, "", "You need administrator access to run this tool")
+        return subprocess.CompletedProcess(command, 0, native_output(command), "")
+
+    return run
+
+
+@pytest.fixture
+def invoking_home(monkeypatch):
+    home = Path("/Users/test-scope")
+    monkeypatch.setattr(macos, "_invoking_user_home", lambda: home)
+    return home
+
+
+def test_five_legacy_errors_recover_only_with_explicit_read_only_fallbacks(invoking_home):
+    calls = []
+    responses = {
+        "AutomaticCheckEnabled": extracted_plist(True),
+        "launchd": 'disabled services = {\n "com.openssh.sshd" => disabled\n}',
+        "askForPassword": extracted_plist(True),
+        "askForPasswordDelay": extracted_plist(0),
+        "timed": "1\n",
+    }
+    bundle = MacOSCollector(runner=fallback_runner(responses, calls=calls)).collect()
+    result = evaluate_baseline(controls(), bundle["evidence"])
+    assert result["passed"] == 12
+    assert result["errors"] == 0
+    assert result["compliance_score"] == 100.0
+    plist_commands = [cmd for cmd, _ in calls if cmd[0] == "/usr/bin/plutil"]
+    assert len(plist_commands) == 3
+    assert all(cmd[1:2] == ["-extract"] and cmd[3:6] == ["xml1", "-o", "-"] for cmd in plist_commands)
+    assert any(cmd[-1] == str(invoking_home / "Library/Preferences/com.apple.screensaver.plist") for cmd in plist_commands)
+    assert ["/bin/launchctl", "print-disabled", "system"] in [cmd for cmd, _ in calls]
+    for cmd, options in calls:
+        assert options["shell"] is False
+        assert options["stdin"] == subprocess.DEVNULL
+        assert options["timeout"] == 10
+        assert options["env"]["LC_ALL"] == "C"
+        assert "sudo" not in cmd
+        assert not any(arg.startswith(("-set", "--set", "--enable", "--disable", "-replace", "-insert")) for arg in cmd)
+    assert "explicit com.openssh.sshd" in bundle["evidence"]["remote_login"]["_scope"]
+    assert "synchronization" in bundle["evidence"]["network_time"]["_scope"]
+    assert "private" not in json.dumps(bundle["evidence"])
+
+
+@pytest.mark.parametrize("key,source,output,actual", [
+    ("AutomaticCheckEnabled", "update_check", extracted_plist(False), False),
+    ("AutomaticCheckEnabled", "update_check", extracted_plist(1), True),
+    ("askForPassword", "screen_lock", extracted_plist(False), False),
+    ("askForPassword", "screen_lock", extracted_plist(0), False),
+    ("askForPasswordDelay", "screen_lock_delay", extracted_plist(5.5), 5.5),
+    ("askForPasswordDelay", "screen_lock_delay", extracted_plist(0.00001), 0.00001),
+    ("timed", "network_time", "0", False),
+    ("TMAutomaticTimeOnlyEnabled", "network_time", extracted_plist(False), False),
+])
+def test_explicit_fallback_values_preserve_pass_fail(key, source, output, actual, invoking_home):
+    evidence = MacOSCollector(runner=fallback_runner({key: output})).collect()["evidence"]
+    result = evaluate_source(source, evidence)
+    assert evidence[source]["_collection_ok"] is True
+    assert result["actual"] == actual
+    expected_pass = actual is True if source != "screen_lock_delay" else actual == 0
+    assert result["status"] == ("PASS" if expected_pass else "FAIL")
+
+
+@pytest.mark.parametrize("state,actual", [("disabled", False), ("enabled", True), ("true", False), ("false", True)])
+def test_launchctl_exact_ssh_override_supports_modern_and_older_output(state, actual, invoking_home):
+    output = 'disabled services = {\n "com.company.unrelated" => enabled\n "com.openssh.sshd" => ' + state + '\n}'
+    evidence = MacOSCollector(runner=fallback_runner({"launchd": output})).collect()["evidence"]
+    result = evaluate_source("remote_login", evidence)
+    assert result["actual"] is actual
+    assert result["status"] == ("FAIL" if actual else "PASS")
+
+
+@pytest.mark.parametrize("output", [
+    "", "disabled services = {\n}",
+    'disabled services = {\n "com.openssh.sshd-keygen-wrapper" => disabled\n}',
+    'disabled services = {\n "com.openssh.sshd" => unknown\n}',
+    'disabled services = {\n "com.openssh.sshd" => disabled\n "com.openssh.sshd" => enabled\n}',
+    'disabled services = {\n "com.openssh.sshd" => disabled\n "com.openssh.sshd" => disabled\n}',
+    'disabled services = {\n "com.openssh.sshd" => disabled\n Unexpected diagnostic\n}',
+    'Could not find service "com.openssh.sshd" in domain for system',
+])
+def test_missing_or_ambiguous_launchd_state_is_never_inferred(output, invoking_home):
+    evidence = MacOSCollector(runner=fallback_runner({"launchd": output})).collect()["evidence"]
+    result = evaluate_source("remote_login", evidence)
+    assert result["status"] == "ERROR"
+    assert result["actual"] is None
+
+
+@pytest.mark.parametrize("key,source,value", [
+    ("AutomaticCheckEnabled", "update_check", "true"),
+    ("AutomaticCheckEnabled", "update_check", 2),
+    ("askForPassword", "screen_lock", {"value": True}),
+    ("askForPassword", "screen_lock", [True]),
+    ("askForPasswordDelay", "screen_lock_delay", False),
+    ("askForPasswordDelay", "screen_lock_delay", "0"),
+    ("askForPasswordDelay", "screen_lock_delay", -1),
+    ("askForPasswordDelay", "screen_lock_delay", float("nan")),
+    ("askForPasswordDelay", "screen_lock_delay", float("inf")),
+    ("askForPasswordDelay", "screen_lock_delay", 2_147_483_648),
+])
+def test_wrong_type_or_invalid_extracted_scalar_remains_error(key, source, value, invoking_home):
+    evidence = MacOSCollector(runner=fallback_runner({key: extracted_plist(value)})).collect()["evidence"]
+    result = evaluate_source(source, evidence)
+    assert result["status"] == "ERROR"
+    assert result["actual"] is None
+
+
+def test_missing_all_five_values_stays_error_without_defaults_or_user_substitution(invoking_home):
+    calls = []
+    evidence = MacOSCollector(runner=fallback_runner(calls=calls)).collect()["evidence"]
+    assessment = evaluate_baseline(controls(), evidence)
+    assert {r["control_id"] for r in assessment["results"] if r["status"] == "ERROR"} == {
+        "MAC-005", "MAC-009", "MAC-010", "MAC-011", "MAC-012",
+    }
+    assert assessment["passed"] == 7
+    assert assessment["failed"] == 0
+    assert "absent delay is not zero" in evidence["screen_lock_delay"]["_raw"]
+    assert not any("softwareupdate" in cmd[0] or "sysadminctl" in cmd[0] or "-currentHost" in cmd for cmd, _ in calls)
+
+
+@pytest.mark.parametrize("response", [
+    (1, extracted_plist(True), "permission denied /Users/private token=hidden"),
+    (0, extracted_plist(True), "Unrecognized diagnostic token=hidden"),
+    (0, "malformed XML /Users/private token=hidden", ""),
+    (0, '<plist><string>private token=hidden</string></plist>', ""),
+    (0, "x" * 4097, ""),
+    PermissionError("private token=hidden"),
+    FileNotFoundError("private token=hidden"),
+    subprocess.TimeoutExpired(["plutil"], 10, output="private token=hidden"),
+])
+def test_failed_fallbacks_remain_unknown_and_do_not_retain_diagnostics(response, invoking_home):
+    evidence = MacOSCollector(runner=fallback_runner({"askForPassword": response})).collect()["evidence"]
+    result = evaluate_source("screen_lock", evidence)
+    assert result["status"] == "ERROR"
+    assert result["actual"] is None
+    assert "private" not in json.dumps(evidence)
+    assert "hidden" not in json.dumps(evidence)
+    assert evaluate_source("filevault", evidence)["status"] == "PASS"
+
+
+def test_successful_original_reads_are_not_replaced_or_queried_twice(monkeypatch):
+    def unexpected_fallback(query):
+        pytest.fail("Successful evidence must not be replaced with a fallback")
+    monkeypatch.setattr(macos, "_fallback_queries", unexpected_fallback)
+    assessment = evaluate_baseline(controls(), MacOSCollector(runner=runner_with_override()).collect()["evidence"])
+    assert assessment["passed"] == 12
+
+
+def test_user_plist_home_comes_from_real_uid_not_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", "/Users/other-home")
+    monkeypatch.setenv("SUDO_USER", "another-user")
+    monkeypatch.setattr(os, "getuid", lambda: 0, raising=False)
+    monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+    uid_home = tmp_path / "root-home"
+    monkeypatch.setitem(sys.modules, "pwd", SimpleNamespace(getpwuid=lambda uid: SimpleNamespace(pw_dir=str(uid_home))))
+    assert macos._invoking_user_home() == uid_home
+
+
+def test_unknown_or_mismatched_invoking_user_never_reads_another_home(monkeypatch):
+    monkeypatch.setattr(macos, "_invoking_user_home", lambda: None)
+    calls = []
+    evidence = MacOSCollector(runner=fallback_runner(calls=calls)).collect()["evidence"]
+    for source in ("screen_lock", "screen_lock_delay"):
+        assert evaluate_source(source, evidence)["status"] == "ERROR"
+        assert "home could not be resolved safely" in evidence[source]["_raw"]
+    assert not any(cmd[0] == "/usr/bin/plutil" and cmd[2] in {"askForPassword", "askForPasswordDelay"} for cmd, _ in calls)
+
+
+@pytest.mark.parametrize("xml", [
+    "<plist><true/><false/></plist>",
+    "<plist><integer>1</integer><integer>0</integer></plist>",
+    "<plist><true><false/></true></plist>",
+    "<plist><true>garbage</true></plist>",
+    "<plist><dict/><true/></plist>",
+    "<plist>unexpected text<true/></plist>",
+    "<plist><true/>unexpected text</plist>",
+    "<plist><integer>" + "9" * 309 + "</integer></plist>",
+])
+def test_malformed_extracted_xml_never_selects_a_convenient_scalar(xml, invoking_home):
+    evidence = MacOSCollector(runner=fallback_runner({"askForPassword": xml, "askForPasswordDelay": xml})).collect()["evidence"]
+    assert evaluate_source("screen_lock", evidence)["status"] == "ERROR"
+    assert evaluate_source("screen_lock_delay", evidence)["status"] == "ERROR"
+    assert evaluate_source("filevault", evidence)["status"] == "PASS"
+
+
+def test_mismatched_process_identities_prevent_user_home_lookup(monkeypatch):
+    monkeypatch.setattr(os, "getuid", lambda: 501, raising=False)
+    monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setitem(sys.modules, "pwd", SimpleNamespace(getpwuid=lambda uid: pytest.fail("Cannot select a user with mixed identities")))
+    assert macos._invoking_user_home() is None
+
+
+def test_primary_false_is_valid_evidence_and_never_replaced(monkeypatch):
+    monkeypatch.setattr(macos, "_fallback_queries", lambda query: pytest.fail("False is a valid collected value"))
+    evidence = collect_override("AutomaticCheckEnabled", "0")
+    assert evidence["update_check"]["enabled"] is False
+    assert evaluate_source("update_check", evidence)["status"] == "FAIL"
