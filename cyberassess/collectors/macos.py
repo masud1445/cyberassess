@@ -377,7 +377,7 @@ class MacOSCollector:
             failures.append("Unavailable: invoking user's home could not be resolved safely for an exact plist read.")
         return self._unknown(query, "Unavailable: " + _UNAVAILABLE_HINTS[query.source] + " " + " ".join(failures))
 
-    def _preferences(self, domain: str, key: str) -> tuple[dict[str, Any] | None, str]:
+    def _preferences(self, domain: str, key: str, *, machine_observations: bool = False) -> tuple[dict[str, Any] | None, str]:
         command = (sys.executable, _PREFERENCE_HELPER, domain, key)
         result, reason = self._invoke_remaining(command)
         if reason:
@@ -394,6 +394,15 @@ class MacOSCollector:
             native_reason = payload.get("reason")
             if type(native_reason) is str and native_reason in known_reasons:
                 reason += " Probe reason: " + native_reason + "."
+            # CopyAppValue describes this user's application search path, not
+            # a system daemon's configuration. The helper can still have read
+            # exact AnyUser machine domains when that composite value is NULL.
+            # Only MAC-005 opts into those separately typed observations. An
+            # unavailable probe/context or malformed effective value cannot be
+            # reclassified as a successful machine read.
+            if (machine_observations and native_reason == "missing-or-unreadable-effective-value"
+                    and payload.get("value") is None):
+                return payload, reason
             return None, reason
         return payload, reason
 
@@ -477,7 +486,14 @@ class MacOSCollector:
             return self._unknown(query, reason)
         value = parser(native.stdout or "", native.stderr or "", native.returncode)
         if value is None:
-            return self._unknown(query, "Unavailable: native status output was empty, failed, unsupported or ambiguous.")
+            if native.returncode != 0:
+                detail = "native status command returned a nonzero exit status"
+            elif all(stream is None or (isinstance(stream, str) and not stream.strip())
+                     for stream in (native.stdout, native.stderr)):
+                detail = "native status command returned no status output"
+            else:
+                detail = "native status output was unrecognized or ambiguous"
+            return self._unknown(query, "Unavailable: " + detail + "; no state was inferred and raw diagnostics were omitted.")
         return self._effective(query, value, "effective native status; exactly one recognized status across output streams")
 
     def _stream_aware_elevated_status(self, query: _Query, normal: dict[str, Any], parser: Callable[..., Value]) -> dict[str, Any] | None:
@@ -505,8 +521,9 @@ class MacOSCollector:
         configured = self._collect_configured(query)
         status_query = _Query(query.source, query.key, ("/usr/sbin/softwareupdate", "--schedule"), _update_schedule)
         status = self._read_status_streams(status_query, software_update_status)
-        payload, reason = self._preferences("com.apple.SoftwareUpdate", "AutomaticCheckEnabled")
+        payload, reason = self._preferences("com.apple.SoftwareUpdate", "AutomaticCheckEnabled", machine_observations=True)
         resolved = self._machine_policy(query, "com.apple.SoftwareUpdate", "AutomaticCheckEnabled", payload)
+        scope = "effective enforced machine update-check policy verified with CoreFoundation and managed machine preference"
         if resolved is None and payload and payload.get("managed_available") is True and payload.get("managed") is False:
             unreadable = payload.get("unreadable_scopes", [])
             machine = payload.get("machine_current_host")
@@ -515,20 +532,26 @@ class MacOSCollector:
                 machine = payload.get("machine_any_host")
                 selected_scope = "machine_any_host"
             machine = None if selected_scope in unreadable else _boolean(machine)
-            if machine is not None and machine is _boolean(payload.get("value")):
+            if machine is not None:
                 resolved = machine
+                # The native AnyUser domain is a machine setting; a different
+                # current-user value does not configure the system daemon.
+                # Do not promote this fallback to proof of effective runtime
+                # state. Neither an absent key nor an unreadable higher scope
+                # can reach here as a Boolean.
+                scope = "explicit machine configuration via CoreFoundation " + selected_scope + "; invoking-user application preferences do not determine machine configuration"
         if status["_collection_ok"] and resolved is not None and status[query.key] is not resolved:
             return self._unavailable_effective(query, "Native schedule status and resolved machine configuration disagree.")
         if status["_collection_ok"]:
             return self._effective(query, status[query.key], "effective machine state via softwareupdate --schedule", configured)
         if resolved is not None:
-            return self._effective(query, resolved, "effective resolved machine preference via CoreFoundation", configured)
+            return self._effective(query, resolved, scope, configured)
         elevated = self._stream_aware_elevated_status(status_query, status, software_update_status)
         if elevated is not None:
             if elevated["_collection_ok"]:
                 return self._effective(query, elevated[query.key], elevated["_scope"], configured)
             return elevated
-        return self._unavailable_effective(query, status["_raw"] + " " + reason)
+        return self._unavailable_effective(query, status["_raw"] + " " + reason + " No reliable machine update-check scalar was established; other download/install settings do not establish this preference.")
 
     def _effective_screen_lock(self, query: _Query) -> dict[str, Any]:
         payload, reason = self._preferences(_SCREENSAVER, query.command[-1])
