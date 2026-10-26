@@ -250,12 +250,28 @@ def test_complete_legacy_console_output_is_preserved(tmp_path):
 ])
 def test_elevated_read_opt_in_reaches_only_local_macos_collector(monkeypatch, tmp_path, capsys, selection):
     calls = []
+    notices = []
 
     class FakeMac:
         def __init__(self, **options):
             calls.append(options)
 
         def collect(self):
+            before_collection = capsys.readouterr().out
+            authorization = 'Authorization: --allow-elevated-read explicitly authorizes only these fixed read-only macOS status commands:'
+            credential_policy = 'Credential policy: sudo -n -k ignores cached credentials and does not cache authentication; approved passwordless authorization is required.'
+            assert authorization in before_collection
+            assert credential_policy in before_collection
+            assert 'No passwords are requested; user preferences remain unelevated; denied or unavailable evidence remains ERROR.' in before_collection
+            for command in (
+                '/usr/sbin/systemsetup -getremotelogin',
+                '/usr/sbin/systemsetup -getusingnetworktime',
+                '/usr/sbin/softwareupdate --schedule',
+            ):
+                assert command in before_collection
+            assert before_collection.index(authorization) < before_collection.index('Assessment in progress...')
+            assert before_collection.index(credential_policy) < before_collection.index('Assessment in progress...')
+            notices.append(before_collection)
             return get_profile('macos').load_demo()
 
     monkeypatch.setattr('cyberassess.collectors.macos.MacOSCollector', FakeMac)
@@ -265,7 +281,7 @@ def test_elevated_read_opt_in_reaches_only_local_macos_collector(monkeypatch, tm
     report = read_report(tmp_path)
     assert report['profile']['id'] == 'macos'
     assert report['assessment_mode'] == 'local'
-    assert 'Elevated reads: enabled (noninteractive sudo -n; read-only status queries)' in capsys.readouterr().out
+    assert 'Elevated reads: enabled (noninteractive sudo -n; read-only status queries)' in notices[0] + capsys.readouterr().out
 
 
 def test_normal_local_macos_does_not_enable_elevated_reads(monkeypatch, tmp_path, capsys):
@@ -282,7 +298,10 @@ def test_normal_local_macos_does_not_enable_elevated_reads(monkeypatch, tmp_path
     monkeypatch.setattr(cli, 'detect_local_profile', lambda: 'macos')
     assert cli.main(['--profile', 'macos', '--local', '--output', str(tmp_path)]) == 0
     assert calls == [{}]
-    assert 'Elevated reads: enabled' not in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert 'Elevated reads: enabled' not in output
+    assert 'Authorization: --allow-elevated-read' not in output
+    assert 'Credential policy:' not in output
 
 
 @pytest.mark.parametrize('arguments,detected', [

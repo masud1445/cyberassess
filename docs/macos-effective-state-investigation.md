@@ -76,7 +76,9 @@ hard-coded.
 Normal mode never invokes sudo. `--allow-elevated-read` is accepted only for a
 native local macOS assessment, including matching auto-detection. Reliable
 unprivileged sources are tried first. Only a recognized permission denial with
-status still unresolved permits a retry using `sudo -n --` and one exact getter:
+status still unresolved permits a retry using `sudo -n -k --` and one exact getter.
+Passing the flag is explicit operator authorization for that run; before
+collection, the CLI lists the fixed commands and explains the boundary:
 
 - `/usr/sbin/systemsetup -getremotelogin`
 - `/usr/sbin/systemsetup -getusingnetworktime`
@@ -84,10 +86,13 @@ status still unresolved permits a retry using `sudo -n --` and one exact getter:
 
 No other command, preference helper or screen-lock read is elevated. Closed
 stdin and `-n` prevent password prompts; the ten-second timeout remains in
-force. Existing approved noninteractive authorization or a valid sudo credential
-cache must already be available. CyberAssess never creates that authorization,
-changes sudoers or authenticates. Missing/expired/denied elevation produces a
-clear sanitized ERROR; the collector does not replace it with a guessed PASS.
+force. Each exact getter must already have administrator-approved passwordless
+authorization. `-k` with a command ignores existing cached sudo credentials and
+does not update them; a cached sudo login is insufficient. CyberAssess never
+creates authorization, requests or collects passwords, establishes or refreshes
+cached credentials, changes sudoers or runs a privileged preflight. Unavailable
+or denied elevation produces a clear sanitized ERROR; the collector does not
+replace it with a guessed PASS.
 No setter, enable/disable operation, write or remediation command is allowlisted.
 Known conflicting SSH override/registration evidence remains ERROR without an
 elevated retry; additional privilege must not conceal a state contradiction.
@@ -121,7 +126,8 @@ the repository root, as the intended assessment user, run normal read-only mode:
 ```
 
 If the owner has authorized the optional privileged getters and existing
-noninteractive sudo authorization is available, run elevated read-only mode:
+administrator-approved passwordless authorization covers the exact getters,
+run elevated read-only mode:
 
 ```bash
 .venv/bin/python main.py --profile macos --local --allow-elevated-read --output reports/macos-elevated-read
@@ -141,11 +147,16 @@ any-host keys. NULL still means ERROR. MAC-011 does not depend on MAC-010's
 status; it assesses only its own known numeric delay. MAC-012 may remain ERROR
 when normal reads are denied and policy cannot establish state. The optional
 mode can resolve a recognized permission block only if sudo authorizes the
-exact status getter; denied/expired/unsupported elevation remains ERROR.
+exact status getter without cached credentials. Authorized native network-time
+On/Off status can establish MAC-012 configuration; a running daemon cannot.
+MAC-005 remains ERROR if the OS exposes no reliable check-specific schedule
+scalar, including when other download/install settings are known. Denied or
+unsupported elevated evidence remains ERROR, without guessed defaults.
 
 ## Source references and validation limits
 
 - [softwareupdate manual](https://raw.githubusercontent.com/keith/xcode-man-pages/master/docs/softwareupdate.8.html): --schedule queries the machine automatic-check preference; authentication may be required.
+- [sudo manual](https://raw.githubusercontent.com/keith/xcode-man-pages/main/docs/sudo.8.html): `-n` prohibits prompts; `-k` with a command ignores and does not update cached credentials.
 - [Apple public CFPreferences API](https://raw.githubusercontent.com/apple-oss-distributions/CF/main/CFPreferences.h) and [resolution implementation](https://raw.githubusercontent.com/apple-oss-distributions/CF/main/CFApplicationPreferences.c): resolved values, exact user/host domains and NULL handling.
 - [Current NIST screen-lock requirement](https://raw.githubusercontent.com/usnistgov/macos_security/main/src/mscp/data/rules/system_settings/system_settings_screensaver_password_enforce.yaml) and [delay rule](https://raw.githubusercontent.com/usnistgov/macos_security/main/src/mscp/data/rules/system_settings/system_settings_screensaver_ask_for_password_delay_enforce.yaml): native resolved preference reads.
 - [launchctl manual](https://raw.githubusercontent.com/keith/xcode-man-pages/master/docs/launchctl.1.html) and [Apple SSH definition](https://raw.githubusercontent.com/apple-oss-distributions/OpenSSH/main/com.openssh.sshd.plist): system-domain queries, explicit defaults and unstable diagnostic output.

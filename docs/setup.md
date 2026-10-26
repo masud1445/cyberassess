@@ -157,7 +157,7 @@ See the [validation record](portability-validation.md) for the interpreter versi
 
 ## Live platform prerequisites
 
-Run only against an owned or explicitly authorized system. Record the target, profile, operator, access level and permitted time window before live collection. The CLI never elevates privileges or changes policy; denied/unsupported/ambiguous evidence is not a passing result. Demos are the safe acceptance path before authorization and target preparation.
+Run only against an owned or explicitly authorized system. Record the target, profile, operator, access level and permitted time window before live collection. The CLI never elevates privileges implicitly or changes policy; denied/unsupported/ambiguous evidence is not a passing result. Demos are the safe acceptance path before authorization and target preparation.
 
 ### Ubuntu
 
@@ -179,7 +179,7 @@ The profile covers all Domain/Private/Public firewall profiles, the OS volume's 
 
 ### macOS
 
-Use native macOS and its installed `fdesetup`, Application Firewall `socketfilterfw`, `csrutil`, `spctl`, `defaults`, `plutil`, `launchctl`, `softwareupdate` and `systemsetup` tools. Public CoreFoundation preference reads use Python's standard library in a bounded helper; no PyObjC dependency is needed. Collection is local and read-only. Normal mode never invokes sudo or prompts for privileges. Consistent launchd evidence can resolve Remote Login without elevation, and scoped native machine preferences or verified enforced policy can establish some update/time settings. Unavailable evidence remains ERROR.
+Use native macOS and its installed `fdesetup`, Application Firewall `socketfilterfw`, `csrutil`, `spctl`, `defaults`, `plutil`, `launchctl`, `softwareupdate`, `systemsetup` and `sysadminctl` tools. Public CoreFoundation preference reads use Python's standard library in a bounded helper; no PyObjC dependency is needed. Collection is local and read-only. Normal mode never invokes sudo or prompts for privileges. Consistent launchd evidence can resolve Remote Login without elevation, and scoped native machine preferences or verified enforced policy can establish some update/time settings. Unavailable evidence remains ERROR.
 
 ```bash
 .venv/bin/python main.py --profile macos --local --output reports/macos-read-only
@@ -190,9 +190,11 @@ Use native macOS and its installed `fdesetup`, Application Firewall `socketfilte
 
 The screen-lock checks resolve the **invoking user's effective preferences**, including applicable ByHost and managed precedence, and record explicit configured values separately. NULL/invalid native values remain unavailable; absent keys never imply secure defaults. Automatic update checking uses native status or scoped resolved machine preferences; the other update-installation checks retain explicit configuration scope. Running the whole app as root changes the user scope and is not a general fix. Agree on scope with the owner and retain inaccessible evidence. See [macOS live collection troubleshooting](macos-live-collection.md) for the exact new validation command and limitations. Native release/architecture compatibility still requires acceptance on the receiving Mac.
 
-`--allow-elevated-read` applies only to native local macOS collection, including matching auto-detection. It permits noninteractive `sudo -n --` for exactly `/usr/sbin/systemsetup -getremotelogin`, `/usr/sbin/systemsetup -getusingnetworktime` and `/usr/sbin/softwareupdate --schedule`, with no setting argument. The collector first tries reliable unprivileged sources, then retries only a recognized permission-denied status that remains unresolved. All retries use closed stdin and a ten-second timeout. User/ByHost/managed preference resolution remains in the invoking user's unelevated context.
+`--allow-elevated-read` applies only to native local macOS collection, including matching auto-detection. Passing it is explicit per-run operator consent; the CLI lists the authorized getters before assessment. It permits noninteractive `sudo -n -k --` for exactly `/usr/sbin/systemsetup -getremotelogin`, `/usr/sbin/systemsetup -getusingnetworktime` and `/usr/sbin/softwareupdate --schedule`, with no setting argument. The collector first tries reliable unprivileged sources, then retries only a recognized permission-denied status that remains unresolved. All retries use closed stdin and a ten-second timeout. User/ByHost/managed preference resolution remains in the invoking user's unelevated context.
 
-Arrange an existing approved noninteractive authorization or valid sudo credential cache with the administrator before using the optional mode. CyberAssess does not request a password, establish a cache, modify sudoers, grant privileges or change system settings. If elevation is missing, expired or denied, the affected evidence remains ERROR with a sanitized reason. No write or remediation command is part of the allowlist. A known numeric MAC-011 delay is evaluated independently by its unchanged control; it does not establish that MAC-010 password enforcement is enabled.
+The exact getter must already have administrator-approved passwordless authorization. A cached sudo login is insufficient: `-k` with the command ignores existing cached credentials and prevents their update, while `-n` prohibits prompts. CyberAssess does not request or collect a password, establish or refresh cached credentials, modify sudoers, grant privileges, run a privileged preflight or change system settings. If authorization is unavailable or denied, the affected evidence remains ERROR with a sanitized reason. No write or remediation command is part of the allowlist. See the [native sudo manual](https://raw.githubusercontent.com/keith/xcode-man-pages/main/docs/sudo.8.html) for the command-specific `-k` and `-n` contract.
+
+An authorized network-time getter can establish MAC-012 On/Off without inferring state from a running daemon. The optional mode helps MAC-005 only if native scheduling exposes a reliable check-specific scalar; unsupported or absent evidence still remains ERROR. No default is inferred from another update toggle. A known numeric MAC-011 delay is evaluated independently by its unchanged control; it does not establish that MAC-010 password enforcement is enabled.
 
 ### Remote operator sessions
 

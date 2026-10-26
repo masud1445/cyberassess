@@ -149,6 +149,13 @@ def _run_profile(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
     print(f"Mode:     {mode}")
     if args.allow_elevated_read:
         print("Elevated reads: enabled (noninteractive sudo -n; read-only status queries)")
+        from cyberassess.collectors.macos import _ELEVATED_READ_COMMANDS
+        print("Authorization: --allow-elevated-read explicitly authorizes only these fixed read-only macOS status commands:")
+        for command in sorted(_ELEVATED_READ_COMMANDS):
+            print("  " + " ".join(command))
+        print("Reliable unprivileged evidence is tried first; only unresolved permission-denied getters may be retried.")
+        print("Credential policy: sudo -n -k ignores cached credentials and does not cache authentication; approved passwordless authorization is required.")
+        print("No passwords are requested; user preferences remain unelevated; denied or unavailable evidence remains ERROR.", flush=True)
     print(f"Controls: {control_count}")
     print()
     print("Assessment in progress...")
@@ -182,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--local", action="store_true", help="Read the matching local platform; no implicit elevation")
     parser.add_argument(
         "--allow-elevated-read", action="store_true",
-        help="Allow noninteractive sudo -n for allowlisted read-only macOS status queries; never prompts for passwords or changes settings",
+        help="Explicitly authorize noninteractive sudo -n -k for allowlisted read-only macOS status queries; requires approved passwordless sudo; never prompts for passwords or changes settings",
     )
     parser.add_argument("--auto-detect", action="store_true", help="Detect and assess the supported local platform")
     parser.add_argument("--list-profiles", action="store_true", help="List baselines without collecting evidence")

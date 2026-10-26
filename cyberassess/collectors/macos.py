@@ -1,7 +1,8 @@
 """Read-only, local macOS evidence with deliberately narrow output parsing.
 
 Only the fixed queries below run. No command changes settings. Explicit opt-in
-permits noninteractive sudo only for three allowlisted read-only status commands.
+permits noninteractive sudo only for three allowlisted read-only status commands,
+without using or updating cached credentials.
 Missing preferences, unsupported commands, and uncertain output stay unknown;
 they must never stand in for a secure default. Raw evidence is an allowlisted
 summary, not an unrestricted dump of native command output.
@@ -228,6 +229,10 @@ _ELEVATED_READ_COMMANDS = frozenset({
     ("/usr/sbin/systemsetup", "-getusingnetworktime"),
     ("/usr/sbin/softwareupdate", "--schedule"),
 })
+# With a command, sudo -k ignores cached credentials and does not update them.
+# -n forbids authentication prompts. Only pre-approved passwordless policy can
+# authorize these reads; never run a standalone cache/credential command.
+_ELEVATED_READ_PREFIX = ("/usr/bin/sudo", "-n", "-k", "--")
 
 _QUERIES = (
     _Query("filevault", "enabled", ("/usr/bin/fdesetup", "status"), _filevault),
@@ -434,19 +439,21 @@ class MacOSCollector:
         """Retry only an opted-in, denied getter after normal sources fail.
 
         No caller-supplied command or preference probe can reach sudo. -n and
-        closed stdin prohibit a password prompt; no credentials are collected.
+        closed stdin prohibit a password prompt; -k with the getter ignores
+        cached credentials and does not update them. No credentials are collected.
         Once an elevated retry fails, that control stays ERROR.
         """
         if not self._allow_elevated_read or query.command not in _ELEVATED_READ_COMMANDS:
             return None
         if normal.get("_collection_ok") or normal.get("_raw") != _PRIVILEGE_REQUIRED:
             return None
-        command = ("/usr/bin/sudo", "-n", "--", *query.command)
+        command = (*_ELEVATED_READ_PREFIX, *query.command)
         elevated = self._run_query(_Query(query.source, query.key, command, query.parser))
         if elevated["_collection_ok"]:
             return self._effective(
                 query, elevated[query.key],
                 "effective system state via explicit sudo -n read of " + " ".join(query.command)
+                + "; -k ignores cached credentials and does not cache authentication"
                 + "; only this status command is elevated; user preferences retain the invoking user",
             )
         failure = elevated["_raw"]
@@ -459,7 +466,7 @@ class MacOSCollector:
         elif "reported a diagnostic" in failure:
             detail = "the elevated command reported a diagnostic; its status is inconclusive"
         else:
-            detail = "the noninteractive status read was denied or failed; approved sudo access may be unavailable or the native read may still require privileges"
+            detail = "the noninteractive status read was denied or failed; approved passwordless sudo access may be unavailable or the native read may still require privileges; cached credentials are deliberately ignored"
         return self._unavailable_effective(
             query, "Explicit elevated read failed: " + detail + ". No password was requested and no setting was changed.",
         )
@@ -525,18 +532,18 @@ class MacOSCollector:
             result = self._optional_elevated_status(query, normal)
         except UnicodeError:
             reason = "Unavailable: opted-in native status output could not be decoded reliably; no value was inferred."
-            self._command_cache[("/usr/bin/sudo", "-n", "--", *query.command)] = (None, reason)
+            self._command_cache[(*_ELEVATED_READ_PREFIX, *query.command)] = (None, reason)
             return self._unavailable_effective(query, reason)
         if result is None or result["_collection_ok"]:
             return result
-        entry = self._command_cache.get(("/usr/bin/sudo", "-n", "--", *query.command))
+        entry = self._command_cache.get((*_ELEVATED_READ_PREFIX, *query.command))
         if not entry or entry[1] or entry[0] is None:
             return result
         native = entry[0]
         value = parser(native.stdout or "", native.stderr or "", native.returncode)
         if value is None:
             return result
-        return self._effective(query, value, "effective system state via explicit sudo -n read of " + " ".join(query.command) + "; status stream decoded without retaining native logs")
+        return self._effective(query, value, "effective system state via explicit sudo -n read of " + " ".join(query.command) + "; -k ignores cached credentials and does not cache authentication; status stream decoded without retaining native logs")
 
     def _effective_update_check(self, query: _Query) -> dict[str, Any]:
         configured = self._collect_configured(query)
@@ -715,7 +722,7 @@ class MacOSCollector:
                 "profile": "macos",
                 "scope": "Authorized local Mac; effective current-user preference resolution refers to the invoking user only.",
                 "limitations": "Effective configuration is distinguished from explicit stored values; runtime lock and time synchronization success are not verified. "
-                + ("Explicit elevated-read opt-in permits sudo -n only for denied, otherwise unresolved allowlisted status reads; no password prompt. " if self._allow_elevated_read else "Elevated reads are disabled. ")
+                + ("Explicit elevated-read opt-in permits sudo -n -k only for denied, otherwise unresolved allowlisted status reads; cached credentials are ignored and not updated; no password prompt. " if self._allow_elevated_read else "Elevated reads are disabled. ")
                 + "Unknown or contradictory values are ERROR.",
                 "evidence_policy": "Allowlisted status summaries only; no unrestricted command output is retained.",
             },

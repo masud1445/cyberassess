@@ -305,7 +305,7 @@ def test_malformed_native_bytes_are_error_without_aborting_unrelated_controls(co
 
 @pytest.mark.parametrize("command,source", [(SCHEDULE, "update_check"), (SYSTEM_TIME, "network_time")])
 def test_existing_opted_in_retry_with_malformed_bytes_remains_unknown(command, source):
-    sudo = ("/usr/bin/sudo", "-n", "--", *command)
+    sudo = ("/usr/bin/sudo", "-n", "-k", "--", *command)
     runner = NativeOutput({
         command: (1, "", "You need administrator access to run this tool"),
         sudo: UnicodeDecodeError("utf-8", b"private\xffdata", 7, 8, "invalid byte"),

@@ -17,7 +17,7 @@ REMOTE = ("/usr/sbin/systemsetup", "-getremotelogin")
 TIME = ("/usr/sbin/systemsetup", "-getusingnetworktime")
 SCHEDULE = ("/usr/sbin/softwareupdate", "--schedule")
 ALLOWED = {REMOTE, TIME, SCHEDULE}
-SUDO = ("/usr/bin/sudo", "-n", "--")
+SUDO = ("/usr/bin/sudo", "-n", "-k", "--")
 OVERRIDES = ("/bin/launchctl", "print-disabled", "system")
 SERVICE = ("/bin/launchctl", "print", "system/com.openssh.sshd")
 TARGETS = (
@@ -128,8 +128,8 @@ def test_explicit_permission_retry_accepts_only_clean_native_status(command, con
         assert options["locale"] == "C"
         assert "input" not in options
         if cmd[0] == "/usr/bin/sudo":
-            assert cmd[:3] == SUDO
-            assert cmd[3:] in ALLOWED
+            assert cmd[:len(SUDO)] == SUDO
+            assert cmd[len(SUDO):] in ALLOWED
             assert "-S" not in cmd and "-A" not in cmd and "-v" not in cmd
 
 
@@ -197,6 +197,59 @@ def test_denied_unavailable_or_ambiguous_elevation_stays_error_with_sanitized_re
     assert "no setting was changed" in result["raw_evidence"]
     assert "private-user" not in json.dumps(results)
     assert "hidden" not in json.dumps(results)
+
+
+@pytest.mark.parametrize("command,control,on,off", [
+    (TIME, "MAC-012", "Network Time: On", "Network Time: Off"),
+    (SCHEDULE, "MAC-005", "Automatic check is on", "Automatic check is off"),
+])
+@pytest.mark.parametrize("failure", [
+    "password-required", "permission-denied", "command-unavailable", "unsupported",
+    "timeout", "empty", "nonzero", "conflict", "diagnostic", "unknown-format",
+])
+def test_update_and_time_privileged_failures_stay_error_without_credentials_or_raw_output(command, control, on, off, failure):
+    failures = {
+        "password-required": (1, "", "sudo: a password is required private-token"),
+        "permission-denied": PermissionError("private-token"),
+        "command-unavailable": FileNotFoundError("private-token"),
+        "unsupported": (127, "", "unsupported native command private-token"),
+        "timeout": subprocess.TimeoutExpired(["native"], 10, output="private-token"),
+        "empty": (0, "", ""),
+        "nonzero": (1, on, ""),
+        "conflict": (0, on, off),
+        "diagnostic": (0, on, "unrecognized diagnostic private-token"),
+        "unknown-format": (0, "state cannot be established private-token", ""),
+    }
+    bundle, results, runner = collect({command: DENIED, SUDO + command: failures[failure]}, allow=True)
+    assert results[control]["status"] == "ERROR"
+    assert results[control]["actual"] is None
+    assert "Explicit elevated read failed" in results[control]["raw_evidence"]
+    assert "private-token" not in json.dumps(bundle)
+    assert elevated_calls(runner) == [SUDO + command]
+    for native_command, options in runner.calls:
+        assert options["stdin"] == subprocess.DEVNULL
+        assert options["shell"] is False
+        assert options["timeout"] == 10
+        assert "input" not in options
+        if native_command[0] == "/usr/bin/sudo":
+            # -k with the fixed getter ignores cached authentication and does
+            # not update it; -n and closed stdin rule out password collection.
+            assert native_command[:len(SUDO)] == ("/usr/bin/sudo", "-n", "-k", "--")
+            assert native_command[len(SUDO):] in ALLOWED
+            assert not {"-v", "-S", "-A", "-K"}.intersection(native_command)
+
+
+@pytest.mark.parametrize("command,control,output,actual,status", [
+    (TIME, "MAC-012", "Network Time: On", True, "PASS"),
+    (TIME, "MAC-012", "Network Time: Off", False, "FAIL"),
+    (SCHEDULE, "MAC-005", "Automatic check is on", True, "PASS"),
+    (SCHEDULE, "MAC-005", "Automatic check is off", False, "FAIL"),
+])
+def test_privileged_native_status_on_stderr_uses_the_same_safe_cache_prefix(command, control, output, actual, status):
+    _, results, runner = collect({command: DENIED, SUDO + command: (0, "", output)}, allow=True)
+    assert results[control]["status"] == status
+    assert results[control]["actual"] is actual
+    assert elevated_calls(runner) == [SUDO + command]
 
 
 @pytest.mark.parametrize("command,source", [(REMOTE, "remote_login"), (TIME, "network_time"), (SCHEDULE, "update_check")])
@@ -281,6 +334,7 @@ def test_successful_unprivileged_status_never_runs_sudo_even_when_enabled():
     ("/usr/bin/plutil", "-extract", "askForPassword", "xml1", "-o", "-", "/private/user-preferences"),
     (sys.executable, macos._PREFERENCE_HELPER, "com.apple.screensaver", "askForPassword"),
     ("/usr/bin/sudo", "-n", "--", *REMOTE),
+    (*SUDO, *REMOTE),
 ])
 def test_no_other_command_or_argument_combination_can_reach_elevation(command):
     runner = ReadOnlyRunner()
@@ -309,7 +363,8 @@ def test_user_preferences_stay_unprivileged_and_known_delay_keeps_independent_se
     assert set(elevated_calls(runner)) == {SUDO + cmd for cmd in ALLOWED}
     for command, _ in runner.calls:
         if command[0] == "/usr/bin/sudo":
-            assert command[3:] in ALLOWED
+            assert command[:len(SUDO)] == SUDO
+            assert command[len(SUDO):] in ALLOWED
             assert not any("python" in arg or "_macos_preferences.py" in arg for arg in command)
         if command[0] == sys.executable:
             assert command[1] == macos._PREFERENCE_HELPER
