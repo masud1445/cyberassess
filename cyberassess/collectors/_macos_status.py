@@ -27,6 +27,7 @@ import os
 import platform
 import re
 import stat
+from typing import Callable
 
 from cyberassess.collectors._macos_preferences import _safe_user_context
 
@@ -141,6 +142,35 @@ def screen_lock_status(
         # cannot safely be interpreted as an enabled requirement or a delay.
         return None
     return True, seconds
+
+
+def conflicting_status(
+    stdout: str, stderr: str, returncode: int,
+    parser: Callable[[str, str, int], object | None],
+) -> bool:
+    """Detect distinct recognized observations, without resolving a status.
+
+    The full-output decoders deliberately reject multiple status lines. A
+    caller must not then discard explicit conflicting native states and fall
+    back to a reassuring stored preference. Reuse the same narrow decoder on
+    each complete line; unknown text supplies no value or default. False only
+    means no conflict was proven, never that the evidence is usable.
+    """
+    if type(returncode) is not int or returncode != 0:
+        return False
+    if not isinstance(stdout, str) or not isinstance(stderr, str):
+        return False
+    if len(stdout) + len(stderr) > 4096:
+        return False
+    observations = []
+    for stream in (stdout, stderr):
+        for line in stream.splitlines():
+            value = parser(line, "", 0)
+            if value is not None:
+                if observations and value != observations[0]:
+                    return True
+                observations.append(value)
+    return False
 
 
 def current_user_status_context_safe() -> bool:

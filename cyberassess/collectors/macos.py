@@ -26,8 +26,8 @@ from xml.parsers.expat import ExpatError
 from cyberassess.collector import CollectionError
 from cyberassess.collectors._macos_remote_login import parse_override_map, parse_service, resolve_remote_login
 from cyberassess.collectors._macos_status import (
-    automatic_time_status, current_user_status_context_safe, network_time_status,
-    screen_lock_status, software_update_status,
+    automatic_time_status, conflicting_status, current_user_status_context_safe,
+    network_time_status, screen_lock_status, software_update_status,
 )
 
 
@@ -114,6 +114,16 @@ def _plist_preference(text: str) -> Value:
     if type(value) is int and value in (0, 1):
         return bool(value)
     return None
+
+
+def _managed_plist_preference(text: str) -> Value:
+    """Match the native probe's legacy Boolean format, only for policy reads."""
+    value = _plist_value(text)
+    if type(value) is str:
+        if not 0 < len(value) <= 32 or not value.isascii():
+            return None
+        return {"true": True, "yes": True, "false": False, "no": False}.get(value.lower())
+    return _boolean(value)
 
 
 def _plist_delay(text: str) -> Value:
@@ -454,15 +464,18 @@ class MacOSCollector:
             query, "Explicit elevated read failed: " + detail + ". No password was requested and no setting was changed.",
         )
 
-    def _machine_policy(self, query: _Query, domain: str, key: str, payload: dict | None) -> Value:
+    def _machine_policy(self, query: _Query, domain: str, key: str, payload: dict | None) -> tuple[Value, bool]:
         if not payload or payload.get("managed_available") is not True or payload.get("managed") is not True:
-            return None
+            return None, False
         # A current-user suite value alone cannot establish a daemon's machine
         # policy. Require the matching managed machine key as independent scope.
         policy = _plist_query(query, Path("/Library/Managed Preferences") / (domain + ".plist"), key)
+        policy = _Query(policy.source, policy.key, policy.command, _managed_plist_preference, policy.scope)
         observation = self._remaining_query(policy)
         value = _boolean(payload.get("value"))
-        return value if observation["_collection_ok"] and observation[query.key] is value else None
+        configured = observation[query.key] if observation["_collection_ok"] else None
+        conflict = value is not None and configured is not None and configured is not value
+        return (value if configured is value else None), conflict
 
     def _invoke_remaining(self, command: tuple[str, ...]) -> tuple[Any, str | None]:
         """Keep malformed byte output unavailable in the four scoped paths."""
@@ -479,6 +492,21 @@ class MacOSCollector:
         self._invoke_remaining(query.command)
         return self._run_query(query)
 
+    @staticmethod
+    def _status_failure(native: Any) -> str:
+        if native.returncode != 0:
+            detail = "native status command returned a nonzero exit status"
+        elif all(stream is None or (isinstance(stream, str) and not stream.strip())
+                 for stream in (native.stdout, native.stderr)):
+            detail = "native status command returned no status output"
+        else:
+            detail = "native status output was unrecognized or ambiguous"
+        return "Unavailable: " + detail + "; no state was inferred and raw diagnostics were omitted."
+
+    def _native_status_conflicts(self, command: tuple[str, ...], parser: Callable) -> bool:
+        native, reason = self._invoke_remaining(command)
+        return not reason and conflicting_status(native.stdout or "", native.stderr or "", native.returncode, parser)
+
     def _read_status_streams(self, query: _Query, parser: Callable[..., Value]) -> dict[str, Any]:
         """Only the remaining update/time getters use stream-aware decoding."""
         native, reason = self._invoke_remaining(query.command)
@@ -486,14 +514,7 @@ class MacOSCollector:
             return self._unknown(query, reason)
         value = parser(native.stdout or "", native.stderr or "", native.returncode)
         if value is None:
-            if native.returncode != 0:
-                detail = "native status command returned a nonzero exit status"
-            elif all(stream is None or (isinstance(stream, str) and not stream.strip())
-                     for stream in (native.stdout, native.stderr)):
-                detail = "native status command returned no status output"
-            else:
-                detail = "native status output was unrecognized or ambiguous"
-            return self._unknown(query, "Unavailable: " + detail + "; no state was inferred and raw diagnostics were omitted.")
+            return self._unknown(query, self._status_failure(native))
         return self._effective(query, value, "effective native status; exactly one recognized status across output streams")
 
     def _stream_aware_elevated_status(self, query: _Query, normal: dict[str, Any], parser: Callable[..., Value]) -> dict[str, Any] | None:
@@ -521,8 +542,12 @@ class MacOSCollector:
         configured = self._collect_configured(query)
         status_query = _Query(query.source, query.key, ("/usr/sbin/softwareupdate", "--schedule"), _update_schedule)
         status = self._read_status_streams(status_query, software_update_status)
+        if self._native_status_conflicts(status_query.command, software_update_status):
+            return self._unavailable_effective(query, "Native schedule output contains contradictory known states; preference fallback cannot resolve that conflict.")
         payload, reason = self._preferences("com.apple.SoftwareUpdate", "AutomaticCheckEnabled", machine_observations=True)
-        resolved = self._machine_policy(query, "com.apple.SoftwareUpdate", "AutomaticCheckEnabled", payload)
+        resolved, policy_conflict = self._machine_policy(query, "com.apple.SoftwareUpdate", "AutomaticCheckEnabled", payload)
+        if policy_conflict:
+            return self._unavailable_effective(query, "Forced native preference and independently read managed machine policy disagree.")
         scope = "effective enforced machine update-check policy verified with CoreFoundation and managed machine preference"
         if resolved is None and payload and payload.get("managed_available") is True and payload.get("managed") is False:
             unreadable = payload.get("unreadable_scopes", [])
@@ -560,9 +585,15 @@ class MacOSCollector:
         # Modern native lock state can live outside the old screensaver domain.
         # Its process/console selection is not a public contract: require both
         # to name the same invoking user before this read-only fallback runs.
+        native_detail = "Native screen-lock getter skipped: a safe matching invoking/console user context could not be verified; no user switch was performed."
         if current_user_status_context_safe():
-            native, native_reason = self._invoke_remaining(("/usr/sbin/sysadminctl", "-screenLock", "status"))
+            command = ("/usr/sbin/sysadminctl", "-screenLock", "status")
+            native, native_reason = self._invoke_remaining(command)
+            if self._native_status_conflicts(command, screen_lock_status):
+                return self._unavailable_effective(query, "Native screen-lock output contains contradictory known states; preference fallback cannot resolve that conflict.")
             native_state = None if native_reason else screen_lock_status(native.stdout or "", native.stderr or "", native.returncode)
+            if native_state is None:
+                native_detail = "Native screen-lock getter: " + (native_reason or self._status_failure(native))
             if native_state is not None:
                 if not current_user_status_context_safe():
                     return self._unavailable_effective(query, "Invoking/console identity changed during the native screen-lock query; the result was discarded.")
@@ -576,7 +607,7 @@ class MacOSCollector:
                 configured = {query.key: explicit, "_collection_ok": explicit is not None}
                 return self._effective(query, current, "effective current-user screen-lock status via sysadminctl; invoking and console identities matched; preference migration does not imply a default", configured)
         if value is None:
-            return self._unavailable_effective(query, reason)
+            return self._unavailable_effective(query, reason + " " + native_detail)
         # Exact configured values come from the same guarded native helper.
         # Do not invoke user-domain defaults before its identity/home checks.
         explicit = parser(payload.get("explicit_any_host"))
@@ -635,8 +666,13 @@ class MacOSCollector:
         status = self._read_status_streams(query, network_time_status)
         automatic_query = _Query(query.source, query.key, ("/usr/sbin/sysadminctl", "-automaticTime", "status"), _network_time)
         automatic = self._read_status_streams(automatic_query, automatic_time_status)
+        if (self._native_status_conflicts(query.command, network_time_status)
+                or self._native_status_conflicts(automatic_query.command, automatic_time_status)):
+            return self._unavailable_effective(query, "Native automatic-time output contains contradictory known states; other getters or preference fallback cannot resolve that conflict.")
         payload, reason = self._preferences("com.apple.timed", "TMAutomaticTimeOnlyEnabled")
-        policy = self._machine_policy(query, "com.apple.timed", "TMAutomaticTimeOnlyEnabled", payload)
+        policy, policy_conflict = self._machine_policy(query, "com.apple.timed", "TMAutomaticTimeOnlyEnabled", payload)
+        if policy_conflict:
+            return self._unavailable_effective(query, "Forced native preference and independently read managed machine policy disagree.")
         if status["_collection_ok"] and automatic["_collection_ok"] and status[query.key] is not automatic[query.key]:
             return self._unavailable_effective(query, "Native systemsetup and sysadminctl automatic-time status disagree.")
         # This key enforces automatic time when true. False/unforced is not a

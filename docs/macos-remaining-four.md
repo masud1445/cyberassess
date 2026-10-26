@@ -1,100 +1,128 @@
-# Remaining macOS collection errors: native status compatibility
+# Remaining macOS collection errors: evidence sources and diagnostics
 
-This update targets MAC-005, MAC-010, MAC-011 and MAC-012 only. MAC-009 was
-reported passing on the real Mac and its collection path is unchanged. The
-remaining diagnostics establish unavailable evidence; they do not establish
-whether the underlying settings are enabled or disabled.
+## Current investigation
 
-No real Mac is attached to the development environment. The changes below are
-collector improvements validated with native-output fixtures and fake
-CoreFoundation bindings. They are **not confirmed live fixes** until a new
-assessment is performed on an actual Mac.
+The latest supplied live summary reports MAC-009 PASS with `actual=false` and
+MAC-005/010/011/012 ERROR. A previous summary reported MAC-010 PASS and MAC-011
+FAIL. The current screen-lock getter, decoder and user-context guard have not
+changed since commit `48c07fc`; the exact running revision, latest JSON and
+native getter output have been requested to distinguish execution-context
+differences from a native-output compatibility problem. No latest live JSON is
+available in this checkout, so its cause cannot yet be established.
 
-## Exact changes
+Before changes, the full suite passed **946 tests**. Inspection found three
+reproducible gaps, corrected in this revision:
 
-- CoreFoundation still resolves the invoking user's effective preferences,
-  including applicable managed and ByHost precedence. A valid effective value
-  is no longer discarded merely because an unrelated supplemental observation
-  has an unsupported legacy type. Unreadable scopes are flagged internally;
-  an unreadable higher-priority scope is never silently treated as absent.
-- Bounded public CFString reads support the native documented legacy Boolean
-  spellings `true`/`YES` and `false`/`NO`, case-insensitively. Password-delay
-  integer strings are accepted only when the whole ASCII string is a supported
-  nonnegative integer. NULL, malformed strings, unexpected types and denied
-  native reads remain unavailable. No string or preference dictionary is dumped.
-- The update-schedule and network-time getters accept exactly one explicit
-  status from stdout or stderr, including a recognized native Cocoa process
-  prefix. A known softwareupdate banner is permitted, but is not itself a
-  status. Duplicate/conflicting states, warnings, unknown text and nonzero
-  exits remain ERROR.
-  Malformed native byte output is also contained as unavailable evidence in
-  these four paths, rather than aborting unrelated controls.
-- A current-user screen-lock fallback uses only
-  `/usr/sbin/sysadminctl -screenLock status`. Verified native messages include
-  `screenLock delay is immediate`, `screenLock delay is N seconds`, and
-  `screenLock is off`. Off supplies no numeric delay: it must not invent zero
-  or a disabled sentinel for MAC-011.
-- Before that screen-lock getter executes, the real/effective process identity,
-  safe home context and public `/dev/console` ownership must identify the same
-  non-root user. This is checked again before accepting the result; a console
-  identity change discards it. A different console user, root/loginwindow context, unavailable
-  console or home redirect prevents the query. The collector never switches
-  users or reads another user's preferences. The existing CFPreferences route
-  can still assess the invoking user's own readable values.
-- Current native screen-lock status takes precedence over stale **unforced**
-  legacy preferences, which may no longer represent active lock policy after
-  migration. A verified managed requirement/delay that contradicts native
-  policy remains ERROR.
-- Network time additionally queries only
-  `/usr/sbin/sysadminctl -automaticTime status`, without elevation. Native help
-  documents this getter on older and recent releases. The decoder accepts
-  only a whole explicit named automatic-time property sentence with
-  enabled/disabled or on/off state, optionally one final period and a known
-  Cocoa prefix. Actual output wording is not a stable documented API and has
-  not been captured from the receiving Mac; unfamiliar wording remains ERROR.
-  This reports automatic-time configuration, not clock accuracy or proof of
-  successful synchronization.
+1. Screen-lock ERROR evidence reported only the preference failure, hiding
+   whether the modern status getter was skipped, denied, unavailable, empty,
+   unsuccessful or unrecognized. It now includes a fixed sanitized native-stage
+   reason. The current-user/console guard and supported status formats remain
+   unchanged.
+2. The managed-machine cross-check rejected legacy Boolean strings accepted by
+   the native CoreFoundation probe. Only those update/time policy checks now
+   accept bounded ASCII `true`/`YES` and `false`/`NO`, case-insensitively, with
+   no whitespace, numeric-string or missing-value coercion. Both the forced
+   effective scalar and independently read machine policy must agree.
+3. A native getter reporting two different known states could be discarded as
+   unrecognized output, allowing a preference fallback to produce PASS. A
+   forced preference disagreeing with the separately read managed machine key
+   could also be discarded. Both proven contradictions now remain ERROR,
+   including when another source supplies a known value. Unknown text alone
+   proves neither a conflict nor a security value.
 
-The existing CLI options, noninteractive opt-in elevation contract and exact
-sudo allowlist are unchanged. Neither new sysadminctl getter can be elevated.
-Normal mode never invokes sudo. Existing opt-in reads retain `sudo -n`, closed
-stdin and the timeout; no interactive authentication is introduced. All native
-commands are fixed argument lists, read-only and bounded to ten seconds.
+These changes add no native commands, new status formats, private framework
+dependencies, privilege elevation, settings changes or remediation. They do
+not establish that any of the receiving Mac's four errors is resolved.
 
-Report UI/presentation, all control definitions, scoring, PASS/FAIL/ERROR
-semantics, public JSON keys, Ubuntu collection and Windows collection are
-unchanged. Only sanitized selected scalars and fixed provenance labels enter
-reports; native timestamps, process IDs and raw diagnostics are not retained.
+## Evidence used by each control
 
-## Native sources and migration evidence
+| Control | Reliable sources, in order of preference | PASS/FAIL evidence | ERROR conditions |
+| --- | --- | --- | --- |
+| MAC-005 | `softwareupdate --schedule`; forced CoreFoundation value verified against the matching managed machine key; otherwise typed machine current-host/any-host CoreFoundation configuration with known unforced management status. | Explicit on/true is PASS; off/false is FAIL. Configured fallback is labelled as configuration, not proof of daemon runtime state. | No check-specific scalar, denied/unsupported getter, unreadable higher-priority machine scope, unresolved management or contradictory reliable observations. |
+| MAC-010 | `sysadminctl -screenLock status` when invoking and console identities safely match; otherwise invoking-user CoreFoundation preferences, including ByHost/managed resolution. | Explicit immediate/numeric native lock delay establishes a password requirement (PASS); native Off establishes no requirement (FAIL). A reliable own-user Boolean can also assess the preference. | No reliable requirement, unsafe native user context with no own-user fallback, denied/unsupported/unrecognized getter or conflicting policy. Absent legacy keys never imply PASS. |
+| MAC-011 | The same safely scoped native getter, or a reliable invoking-user resolved numeric delay. | An explicit zero/immediate delay is PASS; a known positive delay is FAIL under the unchanged control. | No numeric delay, native Off without a delay, unsupported/denied evidence, unsafe context with no own-user fallback or contradiction. No zero is invented. |
+| MAC-012 | `systemsetup -getusingnetworktime`, then `sysadminctl -automaticTime status`, then an independently verified forced-positive machine `TMAutomaticTimeOnlyEnabled` policy. | Explicit native On is PASS and Off is FAIL. Verified enforced automatic time can establish PASS. | Denied/unsupported/unrecognized native status with no enforced policy, or contradiction. False/unforced enforcement, a server name, cached data or a running time daemon cannot establish the automatic-time state. |
 
-- [Apple preference implementation](https://raw.githubusercontent.com/apple-oss-distributions/CF/main/CFApplicationPreferences.c) documents legacy Boolean/integer representation handling. No unguarded getter default is used.
-- [Native sysadminctl help, older macOS](https://github.com/microsoft/macos-cookbook/issues/32) and [recent captured help](https://github.com/xfreebird/kcpassword/issues/5) document status-only screen-lock and automatic-time forms. Help is evidence for the commands, not a guarantee of stable status wording.
-- Captured native screen-lock statuses: [immediate/current output](https://github.com/sametsazak/mergen/issues/39), [numeric delay](https://github.com/iamivanhx/macos-setup/issues/30), [additional delay example](https://github.com/lil-shimon/dotfiles/issues/199), and [Off status](https://github.com/openai/codex/issues/55615).
-- [osquery's current screen-lock implementation](https://raw.githubusercontent.com/osquery/osquery/master/osquery/tables/system/darwin/screenlock.mm) reads effective grace-period policy through MobileKeyBag. That explains why legacy screensaver preferences can be missing/stale, but this collector does not add that private framework dependency.
-- `timed` cached data and a running daemon do not establish that automatic time
-  is enabled. Missing/false/unforced `TMAutomaticTimeOnlyEnabled` remains
-  insufficient; contradictory known native states remain ERROR.
+Modern screen-lock state may have migrated away from `com.apple.screensaver`;
+the native status route deliberately does not depend on those keys. It never
+switches accounts, reads another user's home, or equates the current screen's
+locked state or an account password policy with the configured lock requirement.
 
-## Expected live outcomes and exact validation command
+MAC-005 has a real platform limit: the separate check-for-updates toggle was
+removed on recent macOS, and Apple's declarative update settings expose
+download/install actions without an equivalent check-specific Boolean. See
+[NIST's discussion](https://github.com/usnistgov/macos_security/issues/437),
+[Apple's legacy payload](https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.SoftwareUpdate.yaml)
+and [its replacement](https://github.com/apple/device-management/blob/release/declarative/declarations/configurations/softwareupdate.settings.yaml).
+Those other settings cannot substitute for the unchanged MAC-005 definition.
 
-Use the reviewed feature-branch revision and run from its repository root as
-the intended logged-in assessment user, without adding sudo:
+MAC-012 may genuinely require local privileges; the
+[systemsetup manual](https://raw.githubusercontent.com/keith/xcode-man-pages/main/docs/systemsetup.8.html)
+documents administrative requirements. No additional trustworthy unprivileged
+enabled-state source was identified. Unknown evidence remains ERROR rather
+than triggering elevation or deriving a setting from service activity.
+
+## Re-run the latest live assessment
+
+From the repository root, as the intended logged-in assessment user, without
+sudo:
 
 ```bash
+git switch feature/multiplatform-cyberassess
+git pull --ff-only origin feature/multiplatform-cyberassess
+git rev-parse HEAD
 .venv/bin/python main.py --profile macos --local --output reports/macos-remaining-four
 ```
 
-Inspect the matching JSON/HTML paths printed by the command. The existing
-`--allow-elevated-read` option is unchanged and remains optional; it does not
-elevate screen-lock/user-preference reads or either new status getter.
+If an ERROR remains, share its sanitized `raw_evidence`, the running commit
+SHA, and the relevant getter output/exit status. These additional commands
+are fixed read-only queries; do not add sudo:
 
-| Control | What can now make it assessable | Why ERROR can still be legitimate |
-| --- | --- | --- |
-| MAC-005 | Explicit native schedule status across supported streams, or valid resolved machine preferences including supported legacy representations. | Unsupported/denied schedule query, absent machine evidence, malformed higher-priority source or contradictory known states. |
-| MAC-010 | Safely scoped native current-user screen-lock status, or valid native preference resolution. | Console/invoking identity mismatch, privacy restrictions, unsupported status wording, unavailable policy or conflicting managed state. |
-| MAC-011 | An explicitly reported native numeric/immediate delay, or a reliable own-user resolved numeric preference. | No numeric delay while native lock is Off, missing/invalid policy, unsafe user context or contradiction. Off/absence never supplies zero. |
-| MAC-012 | Readable native systemsetup or automatic-time status, or existing verified enforced machine policy. | Native permission denial, unsupported getter/status format, missing policy or conflicting known observations. Daemon presence is never enough. |
+```bash
+/usr/sbin/softwareupdate --schedule
+printf 'softwareupdate exit=%s\n' "$?"
+/usr/sbin/sysadminctl -screenLock status
+printf 'screen-lock exit=%s\n' "$?"
+/usr/sbin/systemsetup -getusingnetworktime
+printf 'systemsetup time exit=%s\n' "$?"
+/usr/sbin/sysadminctl -automaticTime status
+printf 'automatic-time exit=%s\n' "$?"
+```
 
-Known insecure observations produce FAIL. Unknown evidence remains ERROR; this
-update does not predict the receiving Mac's values or guarantee all four resolve.
+Regression fixtures cover native and preference PASS/FAIL, missing/denied
+evidence, managed legacy representations, malformed output, conflicts, user
+context restrictions and multiple user/home layouts. They do not execute native
+Mac commands or establish real live success. MAC-009, UI, CLI, profiles, scoring,
+public JSON schema, Ubuntu and Windows collectors remain unchanged.
+
+## Native source references and safety boundaries
+
+- [Apple CF preference implementation](https://github.com/apple-oss-distributions/CF/blob/main/CFApplicationPreferences.c)
+  documents the legacy Boolean representations. No absent-value getter default
+  is used, and the separate XML scalar reader remains structurally validated.
+- [Older sysadminctl native help](https://github.com/microsoft/macos-cookbook/issues/32)
+  and [recent captured help](https://github.com/xfreebird/kcpassword/issues/5)
+  document the status-only commands. Help establishes getter availability,
+  not a stable output format across every OS release.
+- Captured screen-lock outputs include
+  [immediate](https://github.com/sametsazak/mergen/issues/39),
+  [numeric delay](https://github.com/iamivanhx/macos-setup/issues/30), and
+  [Off](https://github.com/openai/codex/issues/55615).
+  Unknown wording remains ERROR when no reliable fallback exists.
+- [osquery's screen-lock source](https://github.com/osquery/osquery/blob/master/osquery/tables/system/darwin/screenlock.mm)
+  illustrates migration to MobileKeyBag state. This collector does not add that
+  private framework dependency.
+- [NIST automatic-time enforcement](https://github.com/usnistgov/macos_security/blob/main/rules/system_settings/system_settings_time_server_enforce.yaml)
+  checks forced automatic-time policy. A server configuration or running daemon
+  is not equivalent evidence; this collector does not claim clock accuracy or
+  successful synchronization.
+
+All native commands use fixed argument lists, closed stdin and a ten-second
+execution timeout. Only sanitized selected scalars and fixed provenance/reason
+labels enter reports. Identities, home paths, timestamps, process IDs and raw
+command diagnostics are not added to evidence summaries.
+
+The existing explicit `--allow-elevated-read` contract and exact sudo allowlist
+remain unchanged. The commands above use normal mode, which never invokes
+sudo. No user switching, interactive password request, setting change or
+remediation is introduced. No other user's preferences are read.
