@@ -15,6 +15,12 @@ from cyberassess.collectors import macos
 from cyberassess.evaluator import evaluate_baseline
 
 
+@pytest.fixture(autouse=True)
+def matching_invoking_console_context(monkeypatch):
+    # Native-query fixtures model an authorized, logged-in console user.
+    monkeypatch.setattr(macos, "current_user_status_context_safe", lambda: True)
+
+
 def controls():
     return json.loads(Path("config/profiles/macos.json").read_text(encoding="utf-8"))
 

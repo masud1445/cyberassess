@@ -13,6 +13,12 @@ from cyberassess.evaluator import evaluate_baseline
 from cyberassess.profiles import build_profile_report
 
 
+@pytest.fixture(autouse=True)
+def matching_invoking_console_context(monkeypatch):
+    # Screen preferences belong to a matching non-root console-user fixture.
+    monkeypatch.setattr(macos, "current_user_status_context_safe", lambda: True)
+
+
 REMOTE = ("/usr/sbin/systemsetup", "-getremotelogin")
 TIME = ("/usr/sbin/systemsetup", "-getusingnetworktime")
 SCHEDULE = ("/usr/sbin/softwareupdate", "--schedule")

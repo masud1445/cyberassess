@@ -47,7 +47,11 @@ def test_skipped_screen_getter_is_visible_without_inspecting_another_user(monkey
         assert results[control]["status"] == "ERROR"
         assert "Native screen-lock getter skipped" in results[control]["raw_evidence"]
         assert "context could not be verified" in results[control]["raw_evidence"]
-    assert SCREEN not in [command for command, _ in runner.calls]
+        assert "logged-in console user" in results[control]["raw_evidence"]
+    commands = [command for command, _ in runner.calls]
+    assert SCREEN not in commands
+    assert probe(LOCK, "askForPassword") not in commands
+    assert probe(LOCK, "askForPasswordDelay") not in commands
 
 
 @pytest.mark.parametrize("key,value,control,status", [

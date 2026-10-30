@@ -259,12 +259,15 @@ def test_ambiguous_or_misleading_native_output_stays_error(command, response, co
     assert results[control]["actual"] is None
 
 
-def test_console_mismatch_prevents_native_screen_query_without_reading_other_users(monkeypatch):
+def test_console_mismatch_prevents_all_screen_reads_without_reading_other_users(monkeypatch):
     monkeypatch.setattr(macos, "current_user_status_context_safe", lambda: False)
     _, _, results, runner = assess({SCREEN: "screenLock delay is immediate"})
     assert results["MAC-010"]["status"] == "ERROR"
     assert results["MAC-011"]["status"] == "ERROR"
-    assert SCREEN not in [command for command, _ in runner.calls]
+    commands = [command for command, _ in runner.calls]
+    assert SCREEN not in commands
+    assert probe(LOCK, "askForPassword") not in commands
+    assert probe(LOCK, "askForPasswordDelay") not in commands
 
 
 def test_console_user_change_during_native_query_discards_the_observed_state(monkeypatch):
@@ -327,16 +330,21 @@ def test_malformed_managed_policy_read_does_not_supply_a_machine_state():
     assert "private" not in json.dumps(results)
 
 
-def test_nonconsole_user_can_still_assess_their_own_guarded_native_preferences(monkeypatch):
+def test_nonconsole_preferences_cannot_stand_in_for_current_console_policy(monkeypatch):
     monkeypatch.setattr(macos, "current_user_status_context_safe", lambda: False)
     _, _, results, runner = assess({
         SCREEN: "screenLock is off",
         probe(LOCK, "askForPassword"): preferences(True, explicit_current_host=True),
         probe(LOCK, "askForPasswordDelay"): preferences(0, explicit_current_host=0),
     })
-    assert results["MAC-010"]["status"] == "PASS"
-    assert results["MAC-011"]["status"] == "PASS"
-    assert SCREEN not in [command for command, _ in runner.calls]
+    assert results["MAC-010"]["status"] == "ERROR"
+    assert results["MAC-011"]["status"] == "ERROR"
+    assert results["MAC-010"]["actual"] is None
+    assert results["MAC-011"]["actual"] is None
+    commands = [command for command, _ in runner.calls]
+    assert SCREEN not in commands
+    assert probe(LOCK, "askForPassword") not in commands
+    assert probe(LOCK, "askForPasswordDelay") not in commands
 
 
 @pytest.mark.parametrize("home", ["/Users/instructor", "/Users/student with spaces", "/Network/Users/account", "/var/root"])

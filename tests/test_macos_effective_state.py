@@ -12,6 +12,12 @@ from cyberassess.collectors import macos
 from cyberassess.evaluator import evaluate_baseline
 
 
+@pytest.fixture(autouse=True)
+def matching_invoking_console_context(monkeypatch):
+    # Identity restrictions are exercised independently of source fixtures.
+    monkeypatch.setattr(macos, "current_user_status_context_safe", lambda: True)
+
+
 SCHEDULE = ("/usr/sbin/softwareupdate", "--schedule")
 REMOTE_STATUS = ("/usr/sbin/systemsetup", "-getremotelogin")
 TIME_STATUS = ("/usr/sbin/systemsetup", "-getusingnetworktime")

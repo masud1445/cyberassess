@@ -173,8 +173,9 @@ def test_collection_failures_are_sanitized_and_other_checks_continue(response):
 
 @pytest.mark.parametrize("stdout", [b"", b"not json", b"[]", b"null", b"{}", b"\xff", b"\xff\xfe{\x00}\x00",
                                     b'{"enabled":true,"enabled":false}', b'{"enabled":true}SECRET',
-                                    b'{"enabled":true,"extra":"' + b"x" * 32768 + b'"}'])
-def test_invalid_encoding_malformed_oversized_or_ambiguous_json_is_error(stdout):
+                                    pytest.param(b'{"enabled":true,"extra":"' + b"x" * 32768 + b'"}', id="oversized-json")])
+def test_invalid_encoding_malformed_oversized_or_ambiguous_json_is_error(stdout, request):
+    assert len(request.node.nodeid) < 512
     bundle, result = evaluate(overrides={"secure_boot": subprocess.CompletedProcess([], 0, stdout)})
     assert result["errors"] == 1
     assert bundle["evidence"]["secure_boot"]["_collection_ok"] is False

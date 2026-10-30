@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import plistlib
 import re
@@ -224,6 +224,12 @@ _MACHINE_PREFERENCE = "explicit configured machine preference; effective MDM pol
 _USER_PREFERENCE = "invoking user's explicit configured screen saver preference; effective/ByHost/MDM policy is not verified"
 _PREFERENCE_HELPER = str(Path(__file__).with_name("_macos_preferences.py").resolve())
 _PRIVILEGE_REQUIRED = "Unavailable: native query requires additional local privileges."
+_PRIVILEGE_GUIDANCE = (
+    " No privileged read was attempted. If the operator authorizes verification "
+    "and administrator-approved passwordless access covers the exact read-only getter, "
+    "rerun local macOS collection with --allow-elevated-read. "
+    "Otherwise retain ERROR; unsupported or ambiguous status remains ERROR."
+)
 _ELEVATED_READ_COMMANDS = frozenset({
     ("/usr/sbin/systemsetup", "-getremotelogin"),
     ("/usr/sbin/systemsetup", "-getusingnetworktime"),
@@ -250,7 +256,7 @@ _QUERIES = (
 )
 
 
-def _plist_query(query: _Query, path: Path, key: str) -> _Query:
+def _plist_query(query: _Query, path: Path | PurePosixPath, key: str) -> _Query:
     return _Query(
         query.source, query.key,
         ("/usr/bin/plutil", "-extract", key, "xml1", "-o", "-", str(path)),
@@ -261,7 +267,7 @@ def _plist_query(query: _Query, path: Path, key: str) -> _Query:
 
 def _fallback_queries(query: _Query) -> tuple[_Query, ...]:
     if query.source == "update_check":
-        return (_plist_query(query, Path(_SOFTWARE_UPDATE + ".plist"), "AutomaticCheckEnabled"),)
+        return (_plist_query(query, PurePosixPath(_SOFTWARE_UPDATE + ".plist"), "AutomaticCheckEnabled"),)
     if query.source in {"screen_lock", "screen_lock_delay"}:
         home = _invoking_user_home()
         if home is not None:
@@ -392,7 +398,7 @@ class MacOSCollector:
             failures.append("Unavailable: invoking user's home could not be resolved safely for an exact plist read.")
         return self._unknown(query, "Unavailable: " + _UNAVAILABLE_HINTS[query.source] + " " + " ".join(failures))
 
-    def _preferences(self, domain: str, key: str, *, machine_observations: bool = False) -> tuple[dict[str, Any] | None, str]:
+    def _preferences(self, domain: str, key: str, *, machine_observations: bool = False, user_observations: bool = False) -> tuple[dict[str, Any] | None, str]:
         command = (sys.executable, _PREFERENCE_HELPER, domain, key)
         result, reason = self._invoke_remaining(command)
         if reason:
@@ -412,10 +418,11 @@ class MacOSCollector:
             # CopyAppValue describes this user's application search path, not
             # a system daemon's configuration. The helper can still have read
             # exact AnyUser machine domains when that composite value is NULL.
-            # Only MAC-005 opts into those separately typed observations. An
-            # unavailable probe/context or malformed effective value cannot be
-            # reclassified as a successful machine read.
-            if (machine_observations and native_reason == "missing-or-unreadable-effective-value"
+            # Callers assessing explicit machine or current-user configuration
+            # can retain separately typed exact-domain observations. A failed
+            # probe/context or malformed effective value cannot be reclassified
+            # as a successful configured preference read.
+            if ((machine_observations or user_observations) and native_reason == "missing-or-unreadable-effective-value"
                     and payload.get("value") is None):
                 return payload, reason
             return None, reason
@@ -476,7 +483,7 @@ class MacOSCollector:
             return None, False
         # A current-user suite value alone cannot establish a daemon's machine
         # policy. Require the matching managed machine key as independent scope.
-        policy = _plist_query(query, Path("/Library/Managed Preferences") / (domain + ".plist"), key)
+        policy = _plist_query(query, PurePosixPath("/Library/Managed Preferences") / (domain + ".plist"), key)
         policy = _Query(policy.source, policy.key, policy.command, _managed_plist_preference, policy.scope)
         observation = self._remaining_query(policy)
         value = _boolean(payload.get("value"))
@@ -583,37 +590,74 @@ class MacOSCollector:
             if elevated["_collection_ok"]:
                 return self._effective(query, elevated[query.key], elevated["_scope"], configured)
             return elevated
-        return self._unavailable_effective(query, status["_raw"] + " " + reason + " No reliable machine update-check scalar was established; other download/install settings do not establish this preference.")
+        guidance = _PRIVILEGE_GUIDANCE if not self._allow_elevated_read and status["_raw"] == _PRIVILEGE_REQUIRED else ""
+        return self._unavailable_effective(query, status["_raw"] + " " + reason + " No reliable machine update-check scalar was established; other download/install settings do not establish this preference." + guidance)
 
     def _effective_screen_lock(self, query: _Query) -> dict[str, Any]:
-        payload, reason = self._preferences(_SCREENSAVER, query.command[-1])
+        # These controls target the console user's policy. Never substitute a
+        # readable root/SSH/other invoking-user preference for that identity.
+        if not current_user_status_context_safe():
+            return self._unavailable_effective(
+                query,
+                "Native screen-lock getter skipped: a safe matching invoking/console user context could not be verified; no user switch was performed. "
+                "Run as the currently logged-in console user from their Terminal session without sudo; root, headless or different-user sessions cannot establish this policy.",
+            )
+        result = self._screen_lock_observation(query)
+        if result["_collection_ok"] and not current_user_status_context_safe():
+            return self._unavailable_effective(
+                query,
+                "Invoking/console identity changed during screen-lock evidence collection; the result was discarded. "
+                "Rerun as the logged-in console user without sudo.",
+            )
+        return result
+
+    def _screen_lock_observation(self, query: _Query) -> dict[str, Any]:
+        """Read only after the caller verifies the invoking/console identity."""
+        payload, reason = self._preferences(_SCREENSAVER, query.command[-1], user_observations=True)
         parser = _numeric_delay if query.source == "screen_lock_delay" else _boolean
         value = None if payload is None else parser(payload.get("value"))
         # Modern native lock state can live outside the old screensaver domain.
-        # Its process/console selection is not a public contract: require both
-        # to name the same invoking user before this read-only fallback runs.
-        native_detail = "Native screen-lock getter skipped: a safe matching invoking/console user context could not be verified; no user switch was performed."
-        if current_user_status_context_safe():
-            command = ("/usr/sbin/sysadminctl", "-screenLock", "status")
-            native, native_reason = self._invoke_remaining(command)
-            if self._native_status_conflicts(command, screen_lock_status):
-                return self._unavailable_effective(query, "Native screen-lock output contains contradictory known states; preference fallback cannot resolve that conflict.")
-            native_state = None if native_reason else screen_lock_status(native.stdout or "", native.stderr or "", native.returncode)
-            if native_state is None:
-                native_detail = "Native screen-lock getter: " + (native_reason or self._status_failure(native))
-            if native_state is not None:
-                if not current_user_status_context_safe():
-                    return self._unavailable_effective(query, "Invoking/console identity changed during the native screen-lock query; the result was discarded.")
-                current = native_state[1] if query.source == "screen_lock_delay" else native_state[0]
-                managed = bool(payload and payload.get("managed_available") is True and payload.get("managed") is True)
-                if current is not None and managed and value is not None and current != value:
-                    return self._unavailable_effective(query, "Native screen-lock status contradicts the enforced managed preference.")
-                if current is None:
-                    return self._unavailable_effective(query, "Native screen lock is off and supplies no numeric password delay; no zero or sentinel was invented.")
-                explicit = None if payload is None else parser(payload.get("explicit_any_host"))
-                configured = {query.key: explicit, "_collection_ok": explicit is not None}
-                return self._effective(query, current, "effective current-user screen-lock status via sysadminctl; invoking and console identities matched; preference migration does not imply a default", configured)
+        # The outer guard establishes the account and rechecks it on success.
+        command = ("/usr/sbin/sysadminctl", "-screenLock", "status")
+        native, native_reason = self._invoke_remaining(command)
+        if self._native_status_conflicts(command, screen_lock_status):
+            return self._unavailable_effective(query, "Native screen-lock output contains contradictory known states; preference fallback cannot resolve that conflict.")
+        native_state = None if native_reason else screen_lock_status(native.stdout or "", native.stderr or "", native.returncode)
+        native_detail = ""
+        if native_state is None:
+            native_detail = "Native screen-lock getter: " + (native_reason or self._status_failure(native))
+        if native_state is not None:
+            current = native_state[1] if query.source == "screen_lock_delay" else native_state[0]
+            managed = bool(payload and payload.get("managed_available") is True and payload.get("managed") is True)
+            if current is not None and managed and value is not None and current != value:
+                return self._unavailable_effective(query, "Native screen-lock status contradicts the enforced managed preference.")
+            if current is None:
+                return self._unavailable_effective(query, "Native screen lock is off and supplies no numeric password delay; no zero or sentinel was invented.")
+            explicit = None if payload is None else parser(payload.get("explicit_any_host"))
+            configured = {query.key: explicit, "_collection_ok": explicit is not None}
+            return self._effective(query, current, "effective current-user screen-lock status via sysadminctl; invoking and console identities matched; preference migration does not imply a default", configured)
         if value is None:
+            # Some versions expose an exact own-user/ByHost value even when
+            # the application search returns NULL. This is configuration, not
+            # proof of effective migrated lock policy. Never bypass unknown or
+            # enforced management, a failed helper, or an unreadable higher
+            # scope. A readable native status above remains preferred.
+            if (payload and payload.get("available") is False
+                    and payload.get("managed_available") is True and payload.get("managed") is False):
+                unreadable = payload.get("unreadable_scopes", [])
+                field = "explicit_current_host"
+                if payload.get(field) is None and field not in unreadable:
+                    field = "explicit_any_host"
+                configured_value = None if field in unreadable else parser(payload.get(field))
+                if configured_value is not None:
+                    host_scope = "ByHost" if field == "explicit_current_host" else "any-host"
+                    explicit = parser(payload.get("explicit_any_host"))
+                    configured = {query.key: explicit, "_collection_ok": explicit is not None}
+                    return self._effective(
+                        query, configured_value,
+                        "explicit configured current-user " + host_scope + " preference via CoreFoundation; effective application value and native screen-lock status unavailable; no runtime state was inferred",
+                        configured,
+                    )
             return self._unavailable_effective(query, reason + " " + native_detail)
         # Exact configured values come from the same guarded native helper.
         # Do not invoke user-domain defaults before its identity/home checks.
@@ -641,7 +685,7 @@ class MacOSCollector:
             return self._effective(query, status[query.key], "effective system state via systemsetup -getremotelogin")
         overrides, override_error = self._invoke(("/bin/launchctl", "print-disabled", "system"))
         service, service_error = self._invoke(("/bin/launchctl", "print", "system/com.openssh.sshd"))
-        definition = Path("/System/Library/LaunchDaemons/ssh.plist")
+        definition = PurePosixPath("/System/Library/LaunchDaemons/ssh.plist")
         label = self._run_query(_Query(query.source, query.key, ("/usr/bin/plutil", "-extract", "Label", "xml1", "-o", "-", str(definition)), lambda text: True if _plist_value(text) == "com.openssh.sshd" else None))
         disabled = self._run_query(_plist_query(query, definition, "Disabled"))
         if override_error or service_error or overrides.returncode != 0 or (overrides.stderr or "").strip():
@@ -695,7 +739,8 @@ class MacOSCollector:
         elevated = self._stream_aware_elevated_status(query, status, network_time_status)
         if elevated is not None:
             return elevated
-        return self._unavailable_effective(query, status["_raw"] + " " + reason + " Native automatic-time getter: " + automatic["_raw"] + " An unforced or false enforcement preference does not determine automatic-time state.")
+        guidance = _PRIVILEGE_GUIDANCE if not self._allow_elevated_read and status["_raw"] == _PRIVILEGE_REQUIRED else ""
+        return self._unavailable_effective(query, status["_raw"] + " " + reason + " Native automatic-time getter: " + automatic["_raw"] + " An unforced or false enforcement preference does not determine automatic-time state." + guidance)
 
     def _collect_query(self, query: _Query) -> dict[str, Any]:
         if query.source == "update_check":
