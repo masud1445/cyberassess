@@ -4,10 +4,45 @@ Separate offline/runtime validation from native security collection. A mocked
 fixture, a passing dependency installation or an HTML preview does not establish
 live access, correct target permissions or effective host security configuration.
 
+## Final production-readiness review
+
+Review baseline: `f11662e9fe1421ac91ae1182326e16230e5d235a`, **1,266 passing tests**.
+The updated suite has **1,328 tests**. The 62 additions cover actual collector
+dispatch for macOS (12), Windows (13) and Ubuntu (15), unsupported-platform
+rejection, unavailable live collection without demo fallback, repeated fresh
+reads, clock provenance, timezone-aware UTC normalization, midnight/year changes,
+DST gaps/folds, HTML/JSON agreement and explicit live/demo/source warnings.
+Timezone fixtures carry explicit offsets and need no platform-specific zone
+database or Windows-incompatible environment variables.
+
+Python 3.12/3.13 dependency checks, the full suite, POSIX installer syntax and the
+portability checker pass on this Linux development runner. The three profile
+demos retain their original counts and scores. Chromium rendering is reviewed
+at 320, 390, 768, 1024 and 1440 pixels, with no document overflow or external
+requests. A4 exports include all control IDs, the snapshot/source warning and
+the evidence/guidance appendix; all-pass and unavailable states are synthetic.
+
+The baseline's native [Portability run 41114154791](https://github.com/masud1445/cyberassess/actions/runs/41114154791)
+passed Ubuntu Python 3.10/3.12/3.13 and macOS/Windows Python 3.12. For the updated
+revision, verify all five jobs in the
+[feature-branch workflow history](https://github.com/masud1445/cyberassess/actions/workflows/portability.yml?query=branch%3Afeature%2Fmultiplatform-cyberassess)
+against the exact pushed commit; its outcome is also recorded in the final
+delivery. A passing native hosted test job verifies the regression suite and
+portable demos, not effective security state or privileged reads on a receiving
+machine. No live Windows/macOS target or new SSH credentials were supplied.
+
+The current layout, CSS identity, control definitions/conditions, NIST mappings,
+weighted scoring, JSON assessment fields and CLI options are preserved. Only
+clock metadata is added to live collector envelopes. Ubuntu security commands
+and normalization remain unchanged; one optional unprivileged target-clock
+getter supplies SSH metadata. No settings, remediation or privilege changes run.
+See [timestamp/provenance guidance](handover-runbook.md#understand-assessment-times-and-report-provenance)
+for clock limitations, historical reports and operator acceptance.
+
 ## v2 scope and compatibility
 
-- The original `config/controls.json`, `cyberassess/collector.py` and
-  `cyberassess/evaluator.py` remain the compatibility baseline: 15 Ubuntu
+- The original `config/controls.json` and `cyberassess/evaluator.py` remain
+  unchanged: 15 Ubuntu
   controls, original SSH evidence collection, PASS/FAIL/ERROR semantics and the
   same severity-weighted formula. The original unqualified Ubuntu CLI workflow
   retains its JSON field structure. A committed golden fixture checks its exact
@@ -21,7 +56,7 @@ live access, correct target permissions or effective host security configuration
   Windows/macOS collection and authorized Ubuntu local/SSH validation remain
   separate acceptance work on suitable targets.
 
-## Current Linux development checks
+## Earlier v2 Linux development checks
 
 Before changes, all **7 existing tests passed**, and the legacy demo was recorded.
 The final v2 suite passes on the following Linux runtimes; this runner is not an
@@ -38,7 +73,8 @@ report checks. Injected command results and fixtures exercise Windows/macOS
 success, denial, malformed output, unsupported features and timeouts without
 making native execution claims. Golden fixtures verify the complete legacy
 Ubuntu JSON and console output (apart from generated paths). The original SSH
-collector, evaluator, Ubuntu definitions and demo evidence remain unchanged.
+security evidence, evaluator, Ubuntu definitions and demo evidence remain
+unchanged. The current review adds clock metadata only.
 
 ```text
 python -m pip check
@@ -101,15 +137,16 @@ changed fixtures, incompatible requirement ranges and mismatched constraints;
 failures produced actionable diagnostics. Those historical results do not claim
 that the complete v2 suite has run under every interpreter or native OS.
 
-## Hosted and live checks still required
+## Hosted checks and live acceptance
 
 [The portability workflow](../.github/workflows/portability.yml) defines Ubuntu
 Python 3.10/3.12/3.13 and macOS/Windows Python 3.12 jobs. Inspect actual GitHub
-Actions outcomes after a maintainer publishes the branch; defining a job does
-not mean it ran. Hosted tests/demos do not prove native elevated security reads
+Actions outcomes for the exact pushed revision; the verified baseline run is
+linked above. Hosted tests/demos do not prove native elevated security reads
 or the applicability of this baseline to every OS release/edition. Windows jobs
 also parse installer and collector scripts under Windows PowerShell without
-executing security queries; that hosted parsing remains pending here.
+executing security queries. These checks passed for the published baseline;
+the updated revision requires its own successful run.
 
 Before accepting live use on a receiving machine:
 

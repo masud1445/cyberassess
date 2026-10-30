@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import getpass
 import socket
 import subprocess
 from typing import Any
 
 from cyberassess.collector import SSHCollector
+from cyberassess.timestamps import collection_clock
 
 
 class _LocalSession:
@@ -64,10 +64,11 @@ class UbuntuLocalCollector(SSHCollector):
     def collect(self) -> dict[str, Any]:
         bundle = super().collect()
         bundle["collector"] = {
+            **collection_clock(),
             "method": "Local / subprocess",
             "host": self.host,
             "username": self.username,
             "read_only": True,
         }
-        bundle["collected_at"] = datetime.now(timezone.utc).isoformat()
+        bundle["collected_at"] = bundle["collector"]["collected_at"]
         return bundle

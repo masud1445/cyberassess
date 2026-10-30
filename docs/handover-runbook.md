@@ -66,8 +66,9 @@ bundle's `origin` points to the bundle file rather than GitHub.
   that a successful interactive SSH session proves CyberAssess can authenticate.
 - For native local profiles, confirm the actual OS and account context. Windows
   needs approved elevated reads for some cmdlets; macOS screen-saver preferences
-  refer to the invoking user. Do not run everything as root merely to hide
-  permission errors; doing so changes the macOS user scope.
+  require a safely matching, non-root invoking and console user. Run from that
+  user's Terminal; root, headless and different-user sessions cannot establish
+  the console user's screen-lock policy. Do not change user scope to hide errors.
 - Archive previous reports before running concurrent jobs or repeated runs within
   one second. Existing report filenames use local time with one-second precision;
   another run in that second can overwrite them. JSON and HTML are named by
@@ -158,9 +159,52 @@ do not rely solely on identical filename timestamps. Move or copy both into a
 restricted, access-controlled case folder before the next run. Keep an external
 run record with the target, authorization/reference, operator, UTC run time and
 local timezone, profile/version, collection mode, invoking account, source commit,
-Python/dependency versions, printed paths, counts and review outcome. HTML records
-its generation time in UTC; filenames use local
-time and do not encode a timezone.
+Python/dependency versions, printed paths, counts and review outcome. Filenames
+use local time and do not encode a timezone; use the recorded metadata, rather
+than a filename, to identify the assessment instant.
+
+## Understand assessment times and report provenance
+
+Every new live run performs new native reads. The macOS command cache is scoped
+to one collection and cleared on the next; no collector uses demonstration
+evidence as a live fallback. A failed live connection produces an error rather
+than a sample report. Individual unavailable or ambiguous reads retain ERROR.
+
+Reports are **point-in-time snapshots**, not continuously updating dashboards.
+Reopening an HTML file does not collect anything. Run another authorized live
+assessment to obtain current evidence. Demo reports are labelled demonstration,
+including the legacy `--demo` output; they do not describe the current machine.
+The original legacy console heading is retained for CLI compatibility.
+
+The JSON records offset-aware UTC collection and assessment timestamps. In the
+legacy Ubuntu SSH envelope, the new clock/assessment fields are nested under
+`collector`; the five original top-level fields and security evidence stay intact.
+Versioned reports also expose the canonical collection/start/completion times
+at the top level. Completion is recorded after baseline evaluation. Collection
+time marks completion of the read attempts, not an atomic measurement of every
+control at one instant. Existing imported reports may lack these fields.
+
+HTML displays readable UTC start/completion/collection times and the separately
+observed **target clock (local / UTC)** with an explicit UTC offset. For example,
+`2026-10-31T03:28:00+08:00` is 31 October at 03:28 local and 30 October at 19:28
+UTC. Offsets are captured for the observed instant; an offset from completion
+is never applied to a different event across a daylight-saving transition.
+Naive historical timestamps remain unavailable rather than adopting the viewer's
+timezone. Report generation is separately labelled UTC in metadata and footer;
+printing the HTML retains the same recorded assessment metadata.
+
+Local targets use their native process clock. Ubuntu SSH adds only the fixed,
+unprivileged read `LC_ALL=C /bin/date --iso-8601=seconds` on the established
+connection. Missing, denied, malformed or unavailable target clock output leaves
+local time unknown; the operator host's UTC collection time remains explicitly
+identified. No operator timezone is substituted for the target's. The remote
+clock is sampled separately and can differ from the operator clock; clock
+accuracy is not proven by displaying either timestamp.
+
+Review collection scope, limitations and ERROR details before acting on a score.
+The baseline verdict is not formal compliance certification. Remediation text
+and commands are display-only guidance, require separate authorization/review,
+and are never executed by report generation.
 
 Reports contain target identifiers, configuration and evidence. Apply the
 organization's retention and sharing policy, encrypt backups when required and

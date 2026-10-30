@@ -15,6 +15,7 @@ from typing import Any
 
 from cyberassess import __version__
 from cyberassess.evaluator import evaluate_baseline
+from cyberassess.timestamps import canonical_timestamp
 
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -161,7 +162,7 @@ def get_profile(profile_id: str) -> Profile:
 
 
 def _timestamp(value: str | datetime) -> str:
-    return value.isoformat() if isinstance(value, datetime) else str(value)
+    return canonical_timestamp(value)
 
 
 def _infer_mode(bundle: dict) -> str:

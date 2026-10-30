@@ -25,6 +25,7 @@ from xml.etree import ElementTree
 from xml.parsers.expat import ExpatError
 
 from cyberassess.collector import CollectionError
+from cyberassess.timestamps import collection_clock
 from cyberassess.collectors._macos_remote_login import parse_override_map, parse_service, resolve_remote_login
 from cyberassess.collectors._macos_status import (
     automatic_time_status, conflicting_status, current_user_status_context_safe,
@@ -757,10 +758,12 @@ class MacOSCollector:
         if not self._native_platform:
             raise MacOSCollectionError("Local macOS collection requires macOS; use --demo for sample evidence.")
         self._command_cache.clear()
+        evidence = {query.source: self._collect_query(query) for query in _QUERIES}
         return {
             "target_name": platform.node() or "Unknown (local macOS host)",
             "platform": "macOS",
             "collector": {
+                **collection_clock(),
                 "method": "local / native commands",
                 "mode": "local",
                 "read_only": True,
@@ -771,5 +774,5 @@ class MacOSCollector:
                 + "Unknown or contradictory values are ERROR.",
                 "evidence_policy": "Allowlisted status summaries only; no unrestricted command output is retained.",
             },
-            "evidence": {query.source: self._collect_query(query) for query in _QUERIES},
+            "evidence": evidence,
         }

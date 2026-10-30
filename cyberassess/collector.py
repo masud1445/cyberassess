@@ -6,6 +6,8 @@ import re
 
 import paramiko
 
+from cyberassess.timestamps import collection_clock
+
 
 class CollectionError(RuntimeError):
     pass
@@ -573,6 +575,14 @@ class SSHCollector:
             # Build structured evidence
             # ==================================================
 
+            # Metadata only: this unprivileged getter does not affect any
+            # security value or replace unavailable target timezone evidence.
+            try:
+                clock = self._run(client, "LC_ALL=C /bin/date --iso-8601=seconds")
+                target_time = clock["stdout"] if clock["exit_code"] == 0 and not clock["stderr"] else None
+            except (OSError, paramiko.SSHException):
+                target_time = None
+
             return {
                 "target_name":
                     hostname,
@@ -581,6 +591,7 @@ class SSHCollector:
                     "Ubuntu Linux",
 
                 "collector": {
+                    **collection_clock(remote=True, target_time=target_time),
                     "method":
                         "SSH / Paramiko",
 

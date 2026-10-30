@@ -50,6 +50,7 @@ def _save_reports(report: dict, output: Path | None) -> None:
 def _run_legacy(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Preserve the validated default Ubuntu CLI, assessment and JSON shape."""
     controls = load_controls()
+    started_at = datetime.now(timezone.utc)
     if args.demo:
         evidence_bundle = load_demo()
     else:
@@ -70,6 +71,12 @@ def _run_legacy(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
 
     assessment = evaluate_baseline(controls, evidence_bundle["evidence"])
     report = {**evidence_bundle, "assessment": assessment}
+    if not args.demo and report.get("collector", {}).get("collected_at"):
+        report["collector"] = {
+            **report["collector"],
+            "assessment_started_at": started_at.isoformat(),
+            "assessment_completed_at": datetime.now(timezone.utc).isoformat(),
+        }
     print()
     print("CyberAssess Live Assessment")
     print("===========================")
@@ -165,8 +172,10 @@ def _run_profile(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
         bundle = profile.load_demo() if mode == "demo" else _collect_profile(profile_id, args, mode)
         report = build_profile_report(
             profile, bundle, assessment_mode=mode,
-            started_at=started_at, completed_at=datetime.now(timezone.utc),
+            started_at=started_at,
         )
+        # Completion follows evaluation, rather than merely the final read.
+        report["assessment_completed_at"] = datetime.now(timezone.utc).isoformat()
         print()
         print(f"Target: {report['target_name']}")
         _print_results(report)

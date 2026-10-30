@@ -120,7 +120,8 @@ def check_html(html: str, controls: list[dict], *extra_labels: str) -> None:
     text = " ".join(parser.parts)
     labels = (
         "CyberAssess", "Compliance & Baseline Report", "Assessment summary",
-        "Remediation findings", "All controls", *extra_labels,
+        "Remediation findings", "All controls", "point-in-time snapshot",
+        "not formal compliance certification", "Demonstration data", *extra_labels,
     )
     for label in (*labels, *(control["id"] for control in controls)):
         require(label in text, f"HTML report is missing {label!r}.")

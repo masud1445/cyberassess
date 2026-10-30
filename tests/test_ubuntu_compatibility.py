@@ -66,6 +66,8 @@ def _command_result(command):
     command = command.strip()
     if command == "hostname":
         output = "ubuntu-fixture"
+    elif command == "LC_ALL=C /bin/date --iso-8601=seconds":
+        output = "2026-10-31T03:28:00+08:00"
     elif "/usr/sbin/sshd -T" in command:
         output = "PermitRootLogin=no\nPasswordAuthentication=no\nMaxAuthTries=4\nX11Forwarding=no\nClientAliveInterval=300"
     elif "command -v ufw" in command:

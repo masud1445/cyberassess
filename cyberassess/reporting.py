@@ -7,6 +7,8 @@ from typing import Any
 import json
 import re
 
+from cyberassess.timestamps import aware_datetime, display_timestamp
+
 
 VERDICT_THRESHOLDS = {
     "COMPLIANT": 90.0,
@@ -452,6 +454,7 @@ a { color: var(--info); }
 .metadata { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 17px 24px; margin-top: 24px; padding: 20px 0 22px; border-top: 1px solid #3e556d; }
 .metadata dt { color: #b9cadd; font-size: 10.5px; margin-bottom: 4px; }
 .metadata dd { color: #f0f4f9; font-size: 11.5px; overflow-wrap: anywhere; }
+.metadata .metadata-wide { grid-column: span 2; }
 .sample-notice { display: flex; gap: 7px; align-items: baseline; margin-top: 15px; color: #e5d2ab; font-size: 11px; }
 .sample-notice::before { content: "i"; display: inline-flex; justify-content: center; align-items: center; width: 13px; height: 13px; flex-shrink: 0; border: 1px solid #b9a583; border-radius: 50%; font-size: 9px; font-weight: 600; }
 .report-nav { position: sticky; top: 12px; z-index: 5; display: flex; align-items: center; gap: 6px; margin: 16px 0 20px; padding: 8px; border: 1px solid #d5e0eb; border-radius: 10px; background: #f9fbfd; box-shadow: 0 4px 14px rgb(15 36 61 / 9%); }
@@ -807,6 +810,40 @@ tbody th { font-size: 11px; font-weight: 600; color: #425c76; }
 """
 
 
+def _presentation_mode(report: dict, collector: dict) -> str:
+    """Identify provenance for legacy and versioned reports without inventing it.
+
+    Sample metadata always retains the demonstration warning. Conflicting live
+    metadata cannot establish either local or SSH provenance. This affects only
+    presentation; the assessment and its machine-readable values are unchanged.
+    """
+    modes = {
+        value.lower() for value in (report.get("assessment_mode"), collector.get("mode"))
+        if isinstance(value, str) and value.lower() in {"demo", "local", "ssh"}
+    }
+    if collector.get("sample_data") is True:
+        modes.add("demo")
+    method = collector.get("method")
+    if isinstance(method, str):
+        method = method.lower()
+        if "sample" in method or "demo" in method:
+            modes.add("demo")
+        elif method.startswith("ssh / "):
+            modes.add("ssh")
+        elif method.startswith("local / "):
+            modes.add("local")
+    if "demo" in modes:
+        return "demo"
+    return next(iter(modes)) if len(modes) == 1 else "Not recorded"
+
+
+def _report_time(value: Any) -> str:
+    parsed = aware_datetime(value)
+    if parsed is None:
+        return "Not recorded with a timezone"
+    return f'<time datetime="{_safe(parsed.isoformat())}">{_safe(display_timestamp(parsed, utc=True))}</time>'
+
+
 def render_html(report: dict) -> str:
     assessment = report.get("assessment", {})
     results = list(assessment.get("results", []))
@@ -827,18 +864,20 @@ def render_html(report: dict) -> str:
     product_label = "CyberAssess" + (f" v{version}" if version else " · version not recorded")
     target = _safe(report.get("target_name", "Unknown"))
     platform = _safe(platform_name)
-    generated_at = datetime.now(timezone.utc).strftime("%d %b %Y · %H:%M UTC")
-    collector = report.get("collector") or {}
+    generated_at = display_timestamp(datetime.now(timezone.utc), utc=True)
+    collector = report.get("collector") if isinstance(report.get("collector"), dict) else {}
     method = _safe(collector.get("method", "Not provided"))
-    mode = str(report.get("assessment_mode") or "Not recorded")
+    mode = _presentation_mode(report, collector)
     timestamp_label = "Evidence collected"
-    timestamp = report.get("collected_at")
+    timestamp = report.get("collected_at") or collector.get("collected_at")
     if not timestamp:
         timestamp_label = "Assessment completed"
-        timestamp = report.get("assessment_completed_at")
+        timestamp = report.get("assessment_completed_at") or collector.get("assessment_completed_at")
     if not timestamp:
         timestamp_label = "Assessment time"
         timestamp = "Not recorded"
+    elif aware_datetime(timestamp) is None:
+        timestamp = "Not recorded with a timezone"
     verdict, _ = _verdict(score)
     verdict_class = {
         "Compliant": "compliant", "Partially compliant": "partial", "Non-compliant": "non-compliant"
@@ -866,15 +905,41 @@ def render_html(report: dict) -> str:
         ("Platform", platform),
         ("Baseline / profile", _safe(profile_label)),
         ("Assessment mode", _safe(mode.upper() if mode.lower() == "ssh" else mode.capitalize())),
-        (timestamp_label, _safe(timestamp)),
+        (timestamp_label, _safe(timestamp) if timestamp == "Not recorded" else _report_time(timestamp)),
         ("Collection method", method),
         ("Application", _safe(product_label)),
         ("Report generated", _safe(generated_at)),
     ]
+    for key, label in (("assessment_started_at", "Assessment started"),
+                       ("assessment_completed_at", "Assessment completed")):
+        value = report.get(key) or collector.get(key)
+        if value and label != timestamp_label:
+            metadata.append((label, _report_time(value)))
+    target_clock = aware_datetime(collector.get("target_local_time"))
+    if mode == "demo":
+        clock_text = "Not applicable · demonstration data"
+    elif target_clock is None:
+        clock_text = "Not recorded · target local timezone unavailable"
+    else:
+        clock_text = display_timestamp(target_clock) + " / " + display_timestamp(target_clock, utc=True)
+    metadata.append(("Target clock (local / UTC)", _safe(clock_text)))
+    if mode != "demo":
+        for key, label in (("time_source", "Collection clock source"),
+                           ("time_limitations", "Clock limitations"),
+                           ("scope", "Collection scope"),
+                           ("limitations", "Evidence limitations"),
+                           ("privileges", "Read permissions")):
+            if collector.get(key):
+                metadata.append((label, _safe(_evidence_text(collector[key], 600))))
     for key, label in (("host", "Connection host"), ("username", "Collection account")):
         if collector.get(key):
             metadata.append((label, _safe(collector[key])))
-    metadata_html = "".join(f"<div><dt>{label}</dt><dd>{value}</dd></div>" for label, value in metadata)
+    wide_fields = {"Target clock (local / UTC)", "Clock limitations", "Collection scope", "Evidence limitations"}
+    metadata_html = "".join(
+        f'<div class="metadata-wide"><dt>{label}</dt><dd>{value}</dd></div>'
+        if label in wide_fields else f"<div><dt>{label}</dt><dd>{value}</dd></div>"
+        for label, value in metadata
+    )
 
     if not results:
         summary_text = "No control results were supplied. This report does not establish assessment coverage."
@@ -935,8 +1000,19 @@ def render_html(report: dict) -> str:
 
     threshold_text = "90%+ Compliant · 70–89.9% Partially compliant · Below 70% Non-compliant"
     weighted_text = "Severity-weighted score: High ×3, Medium ×2, Low ×1; FAIL or ERROR earns 0 weight, and ERROR remains in the weighted score denominator."
-    scope_note = "CyberAssess performs read-only baseline assessment and does not automatically modify target security settings."
-    sample_notice = '<p class="sample-notice">Demonstration data · illustrative results, not a live device assessment.</p>' if mode.lower() == "demo" else ""
+    scope_note = (
+        "CyberAssess performs read-only baseline assessment and does not automatically modify target security settings. "
+        "Remediation guidance and suggested commands require operator review and are never run automatically. "
+        "Baseline outcomes are not formal compliance certification."
+    )
+    if mode == "demo":
+        sample_notice = '<p class="sample-notice">Demonstration data · illustrative results, not a live device assessment.</p>'
+    else:
+        source_notice = {
+            "local": "Live native assessment · read-only evidence from the local target.",
+            "ssh": "Live Ubuntu SSH assessment · collect only from an authorized target.",
+        }.get(mode, "Assessment source not verified · collection mode was not recorded consistently.")
+        sample_notice = f'<p class="subtitle assessment-source">{source_notice}</p>'
     errors_nav = f'<a href="#errors-title">Errors<span class="nav-count">{errors}</span></a>' if errors else ""
     print_evidence = f"""
     <section class="section print-evidence-section" aria-labelledby="print-evidence-title">
@@ -983,14 +1059,14 @@ def render_html(report: dict) -> str:
         <div class="score-label">Weighted compliance score</div>
         <div class="score-ring" style="--score-angle:{score_angle:.1f}deg;--score-tone:{score_tone}" role="img" aria-label="Weighted compliance score: {score:.1f}%"><div class="score-value" aria-hidden="true">{score:.1f}<span>%</span></div></div>
       </div>
-      <div class="summary-card verdict-card {verdict_class}"><div class="card-label">Verdict</div><div class="verdict">{escape(verdict) if results else 'Not assessed'}</div><p class="card-note">Severity-weighted baseline result</p></div>
+      <div class="summary-card verdict-card {verdict_class}"><div class="card-label">Baseline verdict</div><div class="verdict">{escape(verdict) if results else 'Not assessed'}</div><p class="card-note">Severity-weighted baseline result</p></div>
       <div class="summary-card metric metric-pass"><dl><dt>Passed</dt><dd>{passed}</dd></dl><p class="card-note">Baseline met</p></div>
       <div class="summary-card metric metric-fail"><dl><dt>Failed</dt><dd>{failed}</dd></dl><p class="card-note">Remediation needed</p></div>
       <div class="summary-card metric metric-error"><dl><dt>Errors / unavailable</dt><dd>{errors}</dd></dl><p class="card-note">Not assessed</p></div>
       <div class="summary-card metric"><dl><dt>Total controls</dt><dd>{total}</dd></dl><p class="card-note">Selected baseline</p></div>
     </div>
     <div class="summary-content">
-      <div class="summary-copy"><p>{summary_text}</p>{error_notice}</div>
+      <div class="summary-copy"><p>{summary_text}</p>{error_notice}<p>This report is a point-in-time snapshot and does not refresh automatically. Re-run a live assessment for current evidence.</p><p>Baseline outcomes are not formal compliance certification.</p></div>
       <div class="assessed-count">Assessed (PASS + FAIL)<strong>{passed + failed} / {total}</strong></div>
     </div>
     <details class="methodology">

@@ -15,6 +15,7 @@ import subprocess
 from typing import Any, Callable
 
 from cyberassess.collector import CollectionError
+from cyberassess.timestamps import collection_clock
 
 
 class WindowsCollectionError(CollectionError):
@@ -240,15 +241,17 @@ class WindowsCollector:
         hostname = platform.node()
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,252}", hostname):
             hostname = "Unknown (local Windows host)"
+        evidence = {source: self._collect_source(executable, source, query)
+                    for source, query in _QUERIES.items()}
         return {
             "target_name": hostname,
             "platform": "Windows",
             "collector": {
+                **collection_clock(),
                 "method": "local / PowerShell", "mode": "local", "read_only": True,
                 "sample_data": False, "profile": "windows", "profile_version": "1",
                 "scope": "Current local Windows machine; read-only configuration checks",
                 "privileges": "Current process token; unavailable or denied checks remain ERROR",
             },
-            "evidence": {source: self._collect_source(executable, source, query)
-                         for source, query in _QUERIES.items()},
+            "evidence": evidence,
         }

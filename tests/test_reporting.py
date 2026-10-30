@@ -79,7 +79,7 @@ def test_generation_time_does_not_claim_to_be_collection_time():
     assert "Evidence collected" not in document
     report["assessment_completed_at"] = "2026-01-02T04:00:00+00:00"
     document = render_html(report)
-    assert "<dt>Assessment completed</dt><dd>2026-01-02T04:00:00+00:00</dd>" in document
+    assert '<dt>Assessment completed</dt><dd><time datetime="2026-01-02T04:00:00+00:00">02 Jan 2026 · 04:00:00 UTC</time></dd>' in document
 
 
 def test_demo_is_clearly_distinguished_from_live_assessment():
