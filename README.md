@@ -18,10 +18,10 @@ Each profile maps checks to NIST SP 800-53 references. A profile is a limited ba
 
 ## Fresh-machine setup
 
-Use Python **3.10–3.13** (3.12 recommended), Git and a new machine-local virtual environment. No database, web server, Docker or application secrets are required. The reviewed application is on `feature/multiplatform-cyberassess`; cloning the default branch does not select this revision.
+Use Python **3.10–3.13** (3.12 recommended), Git and a new machine-local virtual environment. No database, web server, Docker or application secrets are required. The official current application is published on `main`.
 
 ```text
-git clone --branch feature/multiplatform-cyberassess --single-branch https://github.com/masud1445/cyberassess.git
+git clone --branch main --single-branch https://github.com/masud1445/cyberassess.git
 cd cyberassess
 git rev-parse HEAD
 ```

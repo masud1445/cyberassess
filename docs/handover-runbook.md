@@ -34,11 +34,11 @@ remote collection.
    and read permissions. Record unsupported/inaccessible checks rather than
    granting broad privileges or changing policy to make a report pass.
 
-If the reviewed branch has not been pushed, transfer its **committed source**
+For offline handover, transfer the reviewed **committed source** on `main`
 as a Git bundle. On the sending laptop, from the repository root:
 
 ```text
-git bundle create ../cyberassess-handover.bundle feature/multiplatform-cyberassess
+git bundle create ../cyberassess-handover.bundle main
 git bundle verify ../cyberassess-handover.bundle
 ```
 
@@ -46,7 +46,7 @@ Transfer the bundle through an approved channel. On the receiving laptop, from
 the directory containing it:
 
 ```text
-git clone -b feature/multiplatform-cyberassess cyberassess-handover.bundle cyberassess
+git clone -b main cyberassess-handover.bundle cyberassess
 cd cyberassess
 git rev-parse HEAD
 ```

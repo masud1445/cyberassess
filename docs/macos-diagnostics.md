@@ -28,11 +28,11 @@ logged-in console user in Terminal, without sudo:
 .venv/bin/python main.py --profile macos --local --output reports/macos-three-review
 ```
 
-Update a clean checkout of the feature branch before running these commands:
+Update a clean checkout of the current application on `main` before running these commands:
 
 ```bash
-git switch feature/multiplatform-cyberassess
-git pull --ff-only origin feature/multiplatform-cyberassess
+git switch main
+git pull --ff-only origin main
 git rev-parse HEAD
 ```
 

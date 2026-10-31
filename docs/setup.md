@@ -19,17 +19,18 @@ Do not transfer `.venv`, Python caches, private keys, or local trust files as pa
 
 ## Obtain the approved source
 
-Get the exact handover commit or approved tag from the maintainer. If the handover branch is available on GitHub:
+The official current application is on `main`. For a reproducible handover, obtain
+the exact reviewed commit or approved tag from the maintainer:
 
 ```text
-git clone https://github.com/masud1445/cyberassess.git
+git clone --branch main https://github.com/masud1445/cyberassess.git
 cd cyberassess
 git fetch origin
 git switch --detach HANDOVER_REF
 git log -1 --oneline
 ```
 
-Replace `HANDOVER_REF` with the approved commit/tag or fetched remote branch, such as `origin/feature/multiplatform-cyberassess` once published. An unpushed local branch cannot be fetched on another laptop; use the runbook's Git bundle transfer in that case. Do not silently substitute `main` for the handover revision. A supplied archive must contain `main.py`, `cyberassess/`, `config/`, `samples/`, `requirements.txt`, `constraints.txt`, `scripts/`, both installer helpers and `tests/`.
+Replace `HANDOVER_REF` with the approved commit/tag, or `origin/main` when selecting the current application. Do not substitute a moving branch for a specifically pinned handover commit. Use the runbook's Git bundle transfer for offline handover. A supplied archive must contain `main.py`, `cyberassess/`, `config/`, `samples/`, `requirements.txt`, `constraints.txt`, `scripts/`, both installer helpers and `tests/`.
 
 All commands below assume the shell is in the **repository root**, the directory containing `main.py`. The original unqualified Ubuntu workflow uses relative config/sample paths; output paths are also relative unless absolute. The explicit interpreter paths avoid shell activation and PowerShell execution-policy issues.
 

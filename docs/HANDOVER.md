@@ -3,9 +3,9 @@
 ## Operator handover
 
 Start here when moving to another laptop or handing the tool to another operator.
-The reviewed work is on **`feature/multiplatform-cyberassess`**; obtain the exact
-commit from the maintainer. Do not assume `main` contains it or merge it as part
-of setup. [Full operator runbook](handover-runbook.md).
+The official current application is on **`main`**. Record the exact source
+commit used for each deployment; use a pinned reviewed commit when reproducing
+an earlier handover. [Full operator runbook](handover-runbook.md).
 
 ## Product scope and verification
 
@@ -145,8 +145,8 @@ organization's run record. A pending deployment check does not change the
 application's development status or establish a security result.
 
 - [ ] Owner and operator agree the authorized OS-baseline scope and limitations.
-- [ ] Exact feature-branch commit, clean checkout, receiving operator and fresh
-      machine-local virtual environment are recorded; no merge to `main` is assumed.
+- [ ] Exact source commit, clean checkout, receiving operator and fresh
+      machine-local virtual environment are recorded.
 - [ ] Dependency check, full tests, portability check and all five native CI jobs
       pass for the handed-over source; preserve the exact CI link and test count.
 - [ ] Ubuntu/Windows/macOS demos open as samples with 15/13/12 controls; JSON/HTML
