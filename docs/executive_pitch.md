@@ -1,20 +1,20 @@
-# CyberAssess — Executive Pitch
+# CyberAssess — Automated Security Baseline Assessment
 
-## Automated Security Baseline Assessment for SMEs and Training Environments
+## Product overview
 
-**CyberAssess** is a lightweight Python-based cybersecurity compliance and baseline assessment tool designed for SMEs, internal IT teams, training providers and students.
+**CyberAssess** is a Python-based security baseline assessment application for IT administrators, cybersecurity analysts, small and medium-sized organizations, authorized assessment operators, and training or lab environments.
 
 It performs **read-only live evidence collection** from authorized Ubuntu, Windows and macOS systems, maps selected baseline checks to **NIST SP 800-53 references**, calculates automated PASS / FAIL / ERROR results, and generates machine-readable JSON plus self-contained HTML reports.
 
 | Target profile | Controls | Collection |
 | --- | ---: | --- |
-| Ubuntu | 15 | Existing SSH workflow or matching native local execution |
+| Ubuntu | 15 | Authorized SSH workflow or matching native local execution |
 | Windows | 13 | Native local PowerShell queries |
 | macOS | 12 | Native local status and safely scoped preference queries |
 
 Windows/macOS run on the machine being assessed. The profiles contain different
 control sets and their percentages are not cross-platform rankings. Offline
-fixtures remain available for teaching without reading live security settings.
+fixtures remain available for training without reading live security settings.
 
 ---
 
@@ -57,7 +57,7 @@ The same controls and evaluation logic are applied consistently on every run, re
 
 ---
 
-## Compliance and Operational ROI
+## Operational value
 
 CyberAssess creates value by helping SMEs and IT teams:
 
@@ -65,7 +65,7 @@ CyberAssess creates value by helping SMEs and IT teams:
 - prioritize remediation by severity;
 - reduce repetitive manual assessment work;
 - retain structured assessment evidence;
-- compare security posture before and after remediation;
+- compare compatible baseline snapshots before and after separately approved changes;
 - track baseline findings across authorized reassessments;
 - support internal audit preparation and security awareness training.
 
@@ -79,7 +79,7 @@ The implementation includes:
 
 **Versioned 15-control Ubuntu, 13-control Windows and 12-control macOS baselines**
 **Ubuntu SSH / Paramiko and matching native local evidence collection**
-**Severity-weighted compliance scoring**
+**Severity-weighted baseline scoring**
 **PASS / FAIL / ERROR evaluation**
 **Automated gap reporting**
 **NIST SP 800-53 mappings**
@@ -106,7 +106,7 @@ CyberAssess is suitable as an:
 
 **Entry-level SME security baseline checker**
 **Internal IT compliance-readiness tool**
-**Cybersecurity teaching and lab assessment platform**
+**Cybersecurity training and lab assessment application**
 
 It does not replace a formal certified audit, full CIS Benchmark assessment, vulnerability assessment or penetration test.
 
@@ -114,14 +114,13 @@ Its purpose is to provide a practical, repeatable and evidence-based first layer
 
 ---
 
-**CyberAssess**
-*Automated Compliance & Baseline Assessment Tool*
+**CyberAssess — Automated Security Baseline Assessment**
 **Target Platforms:** Ubuntu Linux, native Windows and native macOS
 **Assessment Mode:** Read-only
 **Framework Mapping:** Selected NIST SP 800-53 controls
 
-For supervisor review, see the [requirements and acceptance handover](HANDOVER.md),
-[control coverage](control_master_table.md) and [student lab](student_lab_manual.md).
-The established project scope is OS baseline assessment; examples such as boto3
-do not create an AWS/cloud-scanning requirement. The tool performs no continuous
+For deployment, see the [operator handover](HANDOVER.md),
+[control coverage](control_master_table.md) and [training lab](student_lab_manual.md).
+The scope is selected operating-system baseline assessment. CyberAssess does not
+perform cloud assessment, vulnerability scanning, penetration testing, continuous
 monitoring, automatic remediation or compliance certification.

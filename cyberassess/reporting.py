@@ -1034,7 +1034,7 @@ def render_html(report: dict) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CyberAssess Compliance Report · {target}</title>
+<title>CyberAssess — Automated Security Baseline Assessment · {target}</title>
 <style>{_REPORT_CSS}</style>
 </head>
 <body>
@@ -1045,7 +1045,7 @@ def render_html(report: dict) -> str:
       <span class="platform-badge"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="3" width="15" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 17h6m-3-3v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>{platform}</span>
     </div>
     <div class="header-title-row">
-      <div><h1>Compliance &amp; Baseline Report</h1><p class="subtitle">{_safe(profile_label)} · mapped to relevant NIST SP 800-53 controls</p></div>
+      <div><h1>Security Baseline Report</h1><p class="subtitle">{_safe(profile_label)} · mapped to relevant NIST SP 800-53 controls</p></div>
       <div class="header-target"><span>Assessment target</span><strong>{target}</strong></div>
     </div>
     {sample_notice}
@@ -1064,8 +1064,8 @@ def render_html(report: dict) -> str:
     <div class="section-head"><h2 id="summary-title">Assessment summary</h2><span class="small">Point-in-time baseline review</span></div>
     <div class="summary-cards">
       <div class="summary-card score-card">
-        <div class="score-label">Weighted compliance score</div>
-        <div class="score-ring" style="--score-angle:{score_angle:.1f}deg;--score-tone:{score_tone}" role="img" aria-label="Weighted compliance score: {score:.1f}%"><div class="score-value" aria-hidden="true">{score:.1f}<span>%</span></div></div>
+        <div class="score-label">Weighted baseline score</div>
+        <div class="score-ring" style="--score-angle:{score_angle:.1f}deg;--score-tone:{score_tone}" role="img" aria-label="Weighted baseline score: {score:.1f}%"><div class="score-value" aria-hidden="true">{score:.1f}<span>%</span></div></div>
       </div>
       <div class="summary-card verdict-card {verdict_class}"><div class="card-label">Baseline verdict</div><div class="verdict">{escape(verdict) if results else 'Not assessed'}</div><p class="card-note">Severity-weighted baseline result</p></div>
       <div class="summary-card metric metric-pass"><dl><dt>Passed</dt><dd>{passed}</dd></dl><p class="card-note">Baseline met</p></div>
@@ -1116,7 +1116,7 @@ def render_html(report: dict) -> str:
 
   {print_evidence}
 
-  <footer class="footer"><div><strong>{_safe(product_label)}</strong> · Automated Baseline Assessment</div><div>{_safe(profile_label)}</div><div>Generated {_safe(generated_at)}</div><div class="footer-statement">{scope_note}</div></footer>
+  <footer class="footer"><div><strong>{_safe(product_label)}</strong> · Automated Security Baseline Assessment</div><div>{_safe(profile_label)}</div><div>Generated {_safe(generated_at)}</div><div class="footer-statement">{scope_note}</div></footer>
 </main>
 </body>
 </html>"""

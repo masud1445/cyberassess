@@ -71,7 +71,7 @@ def test_report_renders_key_sections():
     assessment = evaluate_baseline(load_controls(), compliant_evidence())
     report = {"target_name": "test-host", "platform": "Ubuntu Linux", "assessment": assessment}
     html = render_html(report)
-    assert "Compliance &amp; Baseline Report" in html
+    assert "Security Baseline Report" in html
     assert "90%+ Compliant" in html
     assert "Pass rate by category" in html
 

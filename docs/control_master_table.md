@@ -105,5 +105,6 @@ The Ubuntu profile evaluates the 15 rules above; Windows and macOS use their own
 
 The JSON control files are authoritative for IDs, conditions, expected values,
 severity and NIST associations. The shared evaluator and severity weights remain
-unchanged. Review the [requirement map and acceptance checklist](HANDOVER.md)
-with a supervisor before adopting a profile as an organization's grading policy.
+unchanged. Review the [product scope and deployment checklist](HANDOVER.md)
+with the responsible system owner before adopting a profile for operational
+reviews or training. Establish the applicable baseline and interpretation policy.

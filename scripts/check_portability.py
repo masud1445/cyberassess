@@ -119,7 +119,7 @@ def check_html(html: str, controls: list[dict], *extra_labels: str) -> None:
     parser.feed(html)
     text = " ".join(parser.parts)
     labels = (
-        "CyberAssess", "Compliance & Baseline Report", "Assessment summary",
+        "CyberAssess", "Security Baseline Report", "Assessment summary",
         "Remediation findings", "All controls", "point-in-time snapshot",
         "not formal compliance certification", "Demonstration data", *extra_labels,
     )

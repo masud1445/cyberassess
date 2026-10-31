@@ -44,13 +44,14 @@ def test_legacy_demo_preserves_golden_json_and_console(tmp_path):
     result = invoke('--demo', '--output', destination)
     assert result.returncode == 0, result.stderr
     assert read_report(destination) == GOLDEN
-    assert 'CyberAssess Live Assessment\n===========================' in result.stdout
+    assert 'CyberAssess Demonstration Assessment\n===========================' in result.stdout
+    assert 'CyberAssess Live Assessment' not in result.stdout
     assert 'Score:  54.3%\nPassed: 7\nFailed: 8\nErrors: 0' in result.stdout
     assert 'application' not in read_report(destination)
     assert 'JSON report:' in result.stdout and 'HTML report:' in result.stdout
 
 
-def test_legacy_ssh_dispatch_and_json_remain_compatible(monkeypatch, tmp_path):
+def test_legacy_ssh_dispatch_and_json_remain_compatible(monkeypatch, tmp_path, capsys):
     calls = []
     bundle = {key: value for key, value in GOLDEN.items() if key != 'assessment'}
     bundle['collector'] = {**bundle['collector'], 'method': 'SSH / Paramiko'}
@@ -69,6 +70,9 @@ def test_legacy_ssh_dispatch_and_json_remain_compatible(monkeypatch, tmp_path):
     assert status == 0
     assert calls == [{'host': 'authorized.example.test', 'username': 'auditor', 'key_file': '/approved/key', 'port': 2222, 'accept_new_host': True}]
     assert read_report(tmp_path) == expected
+    output = capsys.readouterr().out
+    assert 'CyberAssess Live Assessment' in output
+    assert 'Demonstration' not in output
 
 
 def test_legacy_connection_error_returns_two(monkeypatch, tmp_path, capsys):

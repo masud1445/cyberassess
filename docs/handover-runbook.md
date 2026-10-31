@@ -1,9 +1,11 @@
-# CyberAssess handover and operator runbook
+# CyberAssess — Automated Security Baseline Assessment
+
+## Handover and operator runbook
 
 Use this runbook after completing [fresh-machine setup](setup.md). Run every
 command below from the repository root with the local virtual environment
 activated, or substitute its explicit Python path. The operator laptop may run
-macOS, Linux, or Windows. Ubuntu supports the original SSH workflow and a new
+macOS, Linux, or Windows. Ubuntu supports the SSH workflow and a
 native local mode; Windows/macOS profiles run only on their matching native
 target. Check [platform prerequisites](setup.md#live-platform-prerequisites)
 before collecting; the [SSH prerequisites](ssh-target-setup.md) apply to Ubuntu
@@ -174,10 +176,10 @@ Reports are **point-in-time snapshots**, not continuously updating dashboards.
 Reopening an HTML file does not collect anything. Run another authorized live
 assessment to obtain current evidence. Demo reports are labelled demonstration,
 including the legacy `--demo` output; they do not describe the current machine.
-The original legacy console heading is retained for CLI compatibility.
+The `--demo` CLI heading also identifies the run as a demonstration assessment.
 
 The JSON records offset-aware UTC collection and assessment timestamps. In the
-legacy Ubuntu SSH envelope, the new clock/assessment fields are nested under
+legacy Ubuntu SSH envelope, the clock/assessment fields are nested under
 `collector`; the five original top-level fields and security evidence stay intact.
 Versioned reports also expose the canonical collection/start/completion times
 at the top level. Completion is recorded after baseline evaluation. Collection
@@ -243,6 +245,6 @@ review both files before sharing. Do not publish real evidence as demo content.
 ## Handover acceptance checklist
 
 Use the single [Final Acceptance Checklist](HANDOVER.md#final-acceptance-checklist)
-for supervisor sign-off, requirements, runtime/CI evidence, authorized native
+for deployment scope, runtime/CI evidence, authorized native
 validation and secure report retention. The procedures above provide the
-operational detail; do not sign off an unperformed live check as successful.
+operational detail; record unperformed live checks as unverified.

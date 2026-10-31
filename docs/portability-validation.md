@@ -4,7 +4,35 @@ Separate offline/runtime validation from native security collection. A mocked
 fixture, a passing dependency installation or an HTML preview does not establish
 live access, correct target permissions or effective host security configuration.
 
-## Final professional QA and requirement audit
+## Product presentation review
+
+Starting revision: `04e7cd2a3edbc30a22bab0c75d7c0eccb44990a2`, with **1,493
+passing tests** and all five hosted jobs successful in
+[Portability run 41154107906](https://github.com/masud1445/cyberassess/actions/runs/41154107906).
+The presentation review separates the [archived development context](development-history.md)
+from current product requirements, standardizes security-baseline labels and
+corrects the legacy demo's misleading Live Assessment banner. CLI arguments,
+JSON field names, security definitions, collectors, scoring and report CSS are
+unchanged. Demo console fixtures and report-label assertions reflect only the
+intentional wording correction; result and safe-failure assertions remain intact.
+
+The full suite remains **1,493 passed** on Python **3.12.14** and **3.13.5** on
+this Linux runner. Dependency checks, constrained-version portability checks and
+POSIX installer syntax pass. No tests were skipped or weakened. The five-job
+workflow must also pass for the resulting commit; the delivery records that
+exact commit and CI link. Native operating limitations below remain applicable;
+product development completion does not establish live security correctness on
+an untested machine.
+
+Ubuntu, Windows, macOS and legacy demos retain the same counts, scores and JSON
+contracts. Chromium checks pass at 320, 390, 768, 1024 and 1440 pixels for those
+reports plus synthetic all-pass/unavailable states: no document overflow or
+external requests, working navigation and keyboard disclosures, JSON/HTML metric
+agreement and A4 output containing all control IDs. Desktop and printed pages
+were visually reviewed. No raw live evidence or generated preview is committed;
+the historical report files remain unchanged.
+
+## Earlier technical QA audit (04e7cd2)
 
 Audited baseline: `5e898bd329d92b49baf37fecc9a1de521e40eb97`, **1,328 passing
 tests**, with all five hosted jobs successful in
@@ -19,7 +47,7 @@ claims there that Ubuntu command failure handling is unchanged.
 | Genuine boundary defect corrected | Deeply nested JSON could raise an uncaught recursion error and abort collection/reporting. Unexpected output now follows the existing unavailable/ERROR path without retaining the raw payload. | `test_json_depth_failures.py`; other controls continue to evaluate. |
 | Genuine provenance defect corrected | The profile adapter could label known samples live and substitute completion time for an absent collection clock. All live CLI entry points reject known sample markers; missing collection time remains absent. | `test_report_provenance_guard.py`; existing fixture data/assertions retained with accurately labelled injected-source metadata. |
 | Genuine comparison defect corrected | Historical comparison output inferred remediation/authorization and could compare incompatible snapshots. Reject known mismatches and describe recorded transitions, separating ERROR-to-PASS from FAIL-to-PASS. | `test_comparison_report.py`; fixed paths/CSS and valid 54.3-to-100 comparison preserved; source reports unchanged. |
-| Minor improvements | Completed the truncated lab manual; corrected stale platform/console-user descriptions and historical test-count labels; added official traceability, all-profile coverage and one canonical supervisor checklist. Ignore the documented diagnostic output and generated audit PDFs. | [Supervisor handover](HANDOVER.md), [control coverage](control_master_table.md), setup/pitch/lab/diagnostic docs; Markdown/link and ignore checks. |
+| Minor improvements | Completed the truncated lab manual; corrected stale platform/console-user descriptions and historical test-count labels; added archived requirement traceability, all-profile coverage and one operational checklist. Ignore the documented diagnostic output and generated audit PDFs. | [Development history](development-history.md), [operational handover](HANDOVER.md), [control coverage](control_master_table.md), setup/pitch/lab/diagnostic docs; Markdown/link and ignore checks. |
 | Unverified/native acceptance | Receiving-machine security state, exact read privileges, firmware/edition support, modern macOS unavailable state and owner approval for report distribution require separate acceptance. | [Final Acceptance Checklist](HANDOVER.md#final-acceptance-checklist); no new live SSH credentials or authorized native Windows/macOS target supplied. |
 
 ### Verification for this audit
@@ -41,14 +69,16 @@ counts and scores, and A4 exports containing every control ID pass. Desktop,
 mobile and printed pages were visually reviewed; the existing report CSS is
 unchanged. These preview artifacts are local ignored outputs, not live evidence.
 
-The exact pushed commit and new five-job hosted workflow outcome are recorded
-in the final delivery after CI completes. Verify that revision through the
+For this earlier audit, commit `04e7cd2a3edbc30a22bab0c75d7c0eccb44990a2`
+passed all five hosted jobs in
+[Portability run 41154107906](https://github.com/masud1445/cyberassess/actions/runs/41154107906).
+Verify later revisions through the
 [feature-branch workflow history](https://github.com/masud1445/cyberassess/actions/workflows/portability.yml?query=branch%3Afeature%2Fmultiplatform-cyberassess).
 Run `python -m pip check`, `python -m pytest -q`,
 `python scripts/check_portability.py` and the three profile demos from the
 reviewed checkout. The existing requirements/constraints and supported Python
 3.10–3.13 installation approach remain unchanged. No boto3/cloud dependency was
-added; cloud scanning was not an established mandatory requirement.
+added; cloud scanning is outside the supported OS-assessment scope.
 
 Injected tests and controlled shell stubs do not establish actual host security
 correctness. In particular, re-run the strengthened Ubuntu collector on the
@@ -76,7 +106,7 @@ artifacts. They contain target/account identifiers and private-network addressin
 they are not anonymized examples or evidence of this revision's native accuracy.
 Their bytes/history are preserved. Pattern checks found no private keys or
 recognized credential/token material in them, but that is not complete sanitization.
-Owner review is required before further distribution, including supervisor packs.
+Owner review is required before further distribution, including external review packs.
 
 No new raw live report, diagnostic document, credential or private key is staged
 for publication. The default `macos-diagnostics.json` and generated `audit_*.pdf`
@@ -123,7 +153,7 @@ for clock limitations, historical reports and operator acceptance.
 
 - The original `config/controls.json` and `cyberassess/evaluator.py` remain
   unchanged: 15 Ubuntu
-  controls, original SSH evidence collection, PASS/FAIL/ERROR semantics and the
+  controls, the separate SSH workflow, PASS/FAIL/ERROR semantics and the
   same severity-weighted formula. The original unqualified Ubuntu CLI workflow
   retains its JSON field structure. A committed golden fixture checks its exact
   evidence, assessment fields, ordering and **54.3%** score.
@@ -184,7 +214,7 @@ Chromium checks passed for the three profile demos at 320, 390, 768, 1024 and
 1440 pixels, with no document overflow, keyboard-accessible disclosures and
 self-contained output. A4 exports repeat table headers and print full-width
 evidence/guidance reference sections: Ubuntu 5 pages, Windows 4 and macOS 4 for
-the current demo fixtures. Screenshots and final printed pages were visually
+those historical demo fixtures. Screenshots and final printed pages were visually
 reviewed. All-pass and unavailable-evidence examples are also synthetic.
 
 The portability checker validates installed active requirements/constraints and
@@ -198,8 +228,9 @@ path containing spaces and Unicode, a repeat install preserving a sentinel file
 inside `.venv`, reuse of the project environment, and rejection of an unusable
 existing `.venv` without deleting its user file all passed. `install.ps1` is
 ASCII-only and reviewed for Windows PowerShell
-5.1-compatible syntax and argument quoting; native execution is pending on
-Windows. Neither helper changes OS policy or launches assessments.
+5.1-compatible syntax and argument quoting. Current Windows CI parses the
+installer; full end-to-end installation still needs receiving-machine
+verification. Neither helper changes OS policy or launches assessments.
 
 ## Earlier handover baseline
 

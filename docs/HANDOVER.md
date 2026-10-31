@@ -1,25 +1,29 @@
-# CyberAssess v2 handover
+# CyberAssess — Automated Security Baseline Assessment
+
+## Operator handover
 
 Start here when moving to another laptop or handing the tool to another operator.
 The reviewed work is on **`feature/multiplatform-cyberassess`**; obtain the exact
 commit from the maintainer. Do not assume `main` contains it or merge it as part
 of setup. [Full operator runbook](handover-runbook.md).
 
-## Supervisor requirement traceability
+## Product scope and verification
 
-This project implements **Pillar 2 / Sub-Track 2.1: Compliance & Baseline Check
-Scripts** for authorized operating-system assessments. The requirement lists
-libraries such as Paramiko, boto3, os and json as examples, and permits CIS **or**
-NIST references. CyberAssess uses Paramiko and native OS/standard-library APIs
-with selected NIST SP 800-53 references. AWS/cloud scanning, boto3 and a complete
-CIS assessment are not mandatory parts of this established OS scope.
+CyberAssess assesses authorized operating-system configurations, evaluates
+selected NIST SP 800-53-mapped controls, identifies baseline gaps and generates
+JSON and self-contained HTML reports. It supports IT administrators,
+cybersecurity analysts, small and medium-sized organizations, authorized
+assessment operators, and training or lab environments.
 
-| Official requirement | Existing implementation | Relevant source | Successful verification evidence | Fulfilment | Genuine remaining gap |
-| --- | --- | --- | --- | --- | --- |
-| Automated Python audit scripts using appropriate tools | Python CLI; Paramiko Ubuntu SSH; native Ubuntu, Windows and macOS reads; stdlib os/json/subprocess/ctypes | `main.py`, `cyberassess/collector.py`, `cyberassess/collectors/` | CLI/collector/platform suites; three runnable demos; [hosted and local verification](portability-validation.md) | Met for the OS scope | Receiving-machine permissions and authorized native acceptance remain separate. No cloud-scanning requirement established. |
-| Parse OS/cloud evidence against CIS or NIST | 15 Ubuntu, 13 Windows and 12 macOS configuration checks with explicit values, operators and selected NIST references | `config/controls.json`, `config/profiles/`, `cyberassess/profiles.py` | Profile validation, parser/denial/malformed-output tests; [all control mappings and scope](control_master_table.md) | Met for selected OS/NIST checks | Limited configuration coverage; not a full NIST/CIS assessment or certification. Unknown native state remains ERROR. |
-| Automated Pass/Fail scoring | Shared evaluator produces PASS/FAIL/ERROR; High=3, Medium=2, Low=1; only PASS earns numerator weight | `cyberassess/evaluator.py` | Evaluator and Ubuntu golden regressions; 54.3% reference demo; ERROR denominator tests | Met | ERROR is unavailable evidence, not a confirmed insecure state. Resolve evidence limitations before interpreting a grade. |
-| Gap reports suitable for SME reviews and IT grading | Self-contained JSON/HTML, expected/actual values, severity, NIST references, evidence, findings, display-only guidance and A4 output | `cyberassess/reporting.py`, `samples/`, `scripts/check_portability.py` | Report/provenance/timestamp suites, JSON/HTML comparison, browser/A4 review and portable demos | Met with documented limitations | Supervisor must approve scope and grading policy; snapshots and weighted baseline verdicts do not certify compliance. |
+| Capability | Implementation | Verification and operating limits |
+| --- | --- | --- |
+| Native and Ubuntu SSH evidence collection | Python CLI; Paramiko Ubuntu SSH; native Ubuntu, Windows and macOS reads | CLI/collector/platform suites and three portable demos. Receiving-machine permissions and effective state require authorized live validation. |
+| Selected NIST-mapped configuration checks | 15 Ubuntu, 13 Windows and 12 macOS controls in `config/controls.json` and `config/profiles/` | Profile/parser/denial tests and [control coverage](control_master_table.md). This is a limited baseline, not full NIST/CIS coverage or certification. |
+| Severity-weighted baseline evaluation | Shared `cyberassess/evaluator.py`; PASS/FAIL/ERROR; High=3, Medium=2, Low=1 | Evaluator and golden regressions. Only PASS earns numerator weight; ERROR represents unavailable evidence and remains in the denominator. |
+| Evidence and gap reporting | JSON/HTML snapshots, expected/actual values, severity, NIST references and display-only guidance | Report/provenance/timestamp suites, browser/A4 review and [local/hosted verification](portability-validation.md). Findings require operator interpretation and separately authorized remediation. |
+
+Development origins and earlier requirement traceability are preserved in the
+[development history](development-history.md); they are not operating prerequisites.
 
 Test evidence establishes the stated code paths and fixtures, not the security
 state of an untested machine. Use the exact source commit and CI run in the
@@ -135,11 +139,12 @@ weaken host security just to increase the score.
 
 ## Final Acceptance Checklist
 
-Complete once per handed-over revision; leave native items pending until an
-authorized receiving-machine run is reviewed. Supervisor/date/sign-off belong
-in the organization's run record, not in a fabricated application result.
+Use this operational checklist for each deployment or handover. Record the
+operator, date, reviewed source and any unverified native checks in the
+organization's run record. A pending deployment check does not change the
+application's development status or establish a security result.
 
-- [ ] Supervisor agrees the OS-only Sub-Track 2.1 scope and requirement mapping.
+- [ ] Owner and operator agree the authorized OS-baseline scope and limitations.
 - [ ] Exact feature-branch commit, clean checkout, receiving operator and fresh
       machine-local virtual environment are recorded; no merge to `main` is assumed.
 - [ ] Dependency check, full tests, portability check and all five native CI jobs
@@ -158,5 +163,5 @@ in the organization's run record, not in a fabricated application result.
       access control with a working backup. Historical lab artifacts and new
       diagnostics are reviewed for identifiers before any sharing.
 
-Baseline readiness is **Ready with Documented Limitations** until the supervisor
-records receiving-machine live acceptance. Hosted tests are not a substitute for it.
+Hosted tests verify software regressions and portable demonstrations; they do
+not establish a receiving machine's permissions or effective security state.

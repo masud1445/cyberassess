@@ -79,7 +79,7 @@ def _run_legacy(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
             "assessment_completed_at": datetime.now(timezone.utc).isoformat(),
         }
     print()
-    print("CyberAssess Live Assessment")
+    print("CyberAssess Demonstration Assessment" if args.demo else "CyberAssess Live Assessment")
     print("===========================")
     print(f"Target: {report['target_name']}")
     _print_results(report)
@@ -188,7 +188,7 @@ def _run_profile(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="CyberAssess live cybersecurity baseline assessment")
+    parser = argparse.ArgumentParser(description="CyberAssess — Automated Security Baseline Assessment")
     parser.add_argument("--demo", action="store_true", help="Use sample evidence instead of live collection")
     parser.add_argument("--host")
     parser.add_argument("--user")

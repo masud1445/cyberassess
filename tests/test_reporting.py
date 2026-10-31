@@ -58,6 +58,10 @@ def test_platform_metadata_and_guidance_without_ubuntu_commands(platform, profil
     document = render_html(report_for(platform, profile))
     assert f"CyberAssess {platform} Baseline v1" in document
     assert "CyberAssess v2.0.0" in document
+    assert "<title>CyberAssess — Automated Security Baseline Assessment · workstation-01</title>" in document
+    assert "<h1>Security Baseline Report</h1>" in document
+    assert "Weighted baseline score: 0.0%" in document
+    assert "· Automated Security Baseline Assessment</div>" in document
     assert "2026-01-02T03:04:05+00:00" in document
     assert "Evidence collected" in document
     assert "bitlocker.protection_enabled" in document

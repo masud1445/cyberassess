@@ -1,5 +1,5 @@
-# CyberAssess — Student Lab Manual
-## Automated Ubuntu Security Baseline Assessment
+# CyberAssess — Automated Security Baseline Assessment
+## Training lab: authorized Ubuntu baseline assessment
 
 ### 1. Lab Objective
 
@@ -17,7 +17,7 @@ CyberAssess does not automatically modify the target system.
 
 ### 2. Learning Outcomes
 
-After completing this lab, the student should be able to:
+After completing this lab, the participant should be able to:
 
 - run a Python-based automated security assessment;
 - collect live Ubuntu configuration evidence through SSH;
@@ -26,7 +26,7 @@ After completing this lab, the student should be able to:
 - identify security gaps and remediation guidance;
 - understand selected NIST SP 800-53 mappings;
 - manually remediate an approved lab issue;
-- rerun the assessment and verify measurable improvement.
+- rerun the assessment and interpret the recorded changes and remaining limitations.
 
 ---
 
@@ -44,7 +44,7 @@ Required environment:
 
 Complete [fresh-machine setup](setup.md) and the [Ubuntu SSH authorization, key,
 host-trust and read-permission preflight](ssh-target-setup.md). Do not transfer
-private keys or an existing virtual environment in a project submission.
+private keys or an existing virtual environment in a training or handover archive.
 
 Example lab environment:
 
@@ -72,8 +72,8 @@ python main.py --demo --output reports/lab-demo
 The Ubuntu demonstration intentionally records **15 controls, 7 PASS, 8 FAIL,
 0 ERROR and 54.3%**. Open the two printed JSON/HTML paths and compare the target,
 profile, counts and score. Demo data does not describe the operator workstation
-or prove live SSH access. The legacy console heading is retained for
-compatibility; use the explicit demo invocation and report source warning.
+or prove live SSH access. The CLI heading and report source warning identify
+the explicitly selected demonstration mode.
 
 ### 5. Authorized live Ubuntu assessment
 
@@ -117,9 +117,9 @@ directory, such as `reports/lab-after`. Compare matched controls and evidence;
 do not rank different OS profiles by percentage or assume every ERROR-to-PASS
 transition proves a security setting changed.
 
-### 8. Supervisor submission
+### 8. Retain and review the assessment record
 
-Submit the source revision, runtime/dependency check results, assessment scope,
+Retain the source revision, runtime/dependency check results, assessment scope,
 paired JSON/HTML paths, selected evidence explanations, remaining ERROR reasons
 and reassessment outcome. Use the [handover acceptance checklist](HANDOVER.md)
 and [validation record](portability-validation.md). Distinguish fixture tests,
@@ -128,5 +128,5 @@ hosted native CI and independently reviewed live target evidence.
 Share reports only through the owner's approved process. Review target/account
 identifiers and raw evidence; HTML filtering is not complete sanitization.
 Never include credentials, private keys or unrestricted configuration dumps in
-public submissions. Grading should assess correct scope, reproducible evidence
-and sound interpretation, not require every machine to achieve 100%.
+shared training material. Review correct scope, reproducible evidence and sound
+interpretation; a training exercise does not require every machine to achieve 100%.
