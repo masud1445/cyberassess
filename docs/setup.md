@@ -153,7 +153,7 @@ The commands above must complete with:
 
 The portability checker intentionally uses temporary output rather than changing tracked reports or relying on a writable source checkout. Application demo/live runs write into `reports/`, which must be writable. Each report is saved as UTF-8; use a browser for HTML and a UTF-8-aware editor for JSON.
 
-See the [validation record](portability-validation.md) for the interpreter versions actually exercised and the hosted-platform checks still pending.
+See the [validation record](portability-validation.md) for the interpreter versions and exact hosted runs actually verified, together with receiving-machine live acceptance that remains separate.
 
 ## Live platform prerequisites
 
@@ -161,7 +161,7 @@ Run only against an owned or explicitly authorized system. Record the target, pr
 
 ### Ubuntu
 
-The original SSH workflow requires the approved key, trusted host key and narrowly scoped passwordless `sudo -n` permissions in the [SSH guide](ssh-target-setup.md). The native local Ubuntu profile uses the same baseline and read-only command purposes on the actual Ubuntu host. It is not a portable Linux baseline; missing systemd/GNU/APT tooling in a container or incompatible environment limits evidence. Arrange the approved exact privileged reads with the administrator rather than granting unrestricted sudo or automatically installing assessment subjects. Some inherited commands suppress stderr or use pipelines whose final stage can succeed after a failed read; verify the exact privileged checks in preflight and review actual evidence even when a result says PASS.
+The original SSH workflow requires the approved key, trusted host key and narrowly scoped passwordless `sudo -n` permissions in the [SSH guide](ssh-target-setup.md). The native local Ubuntu profile uses the same baseline and read-only command purposes on the actual Ubuntu host. It is not a portable Linux baseline; missing systemd/GNU/APT tooling in a container or incompatible environment limits evidence. Arrange the approved exact privileged reads with the administrator rather than granting unrestricted sudo or automatically installing assessment subjects. Native failures are checked before filtering, and malformed/denied output cannot establish a secure default. A package is considered absent only after a reliable package-inventory response. Password checks require readable, consistent explicit file/PAM values; they do not attest every effective PAM enforcement path. Verify preflight and review evidence limitations before interpreting a score.
 
 ```bash
 .venv/bin/python main.py --profile ubuntu --local --output reports/ubuntu-local
@@ -188,7 +188,9 @@ Use native macOS and its installed `fdesetup`, Application Firewall `socketfilte
 .venv/bin/python main.py --profile macos --local --allow-elevated-read --output reports/macos-elevated-read
 ```
 
-The screen-lock checks resolve the **invoking user's effective preferences**, including applicable ByHost and managed precedence, and record explicit configured values separately. NULL/invalid native values remain unavailable; absent keys never imply secure defaults. Automatic update checking uses native status or scoped resolved machine preferences; the other update-installation checks retain explicit configuration scope. Running the whole app as root changes the user scope and is not a general fix. Agree on scope with the owner and retain inaccessible evidence. See [macOS live collection troubleshooting](macos-live-collection.md) for the exact new validation command and limitations. Native release/architecture compatibility still requires acceptance on the receiving Mac.
+The screen-lock checks target the **current console user's policy**. Before any screen-lock status or preference read, CyberAssess must verify a safely matching non-root invoking/effective/console identity and the invoking user's real home context; it rechecks the context before accepting a known result. Root, headless, redirected-home or different-user contexts remain ERROR, and no account is substituted. Run from the logged-in console user's Terminal without sudo.
+
+Within that context, native screen-lock status is preferred. Public CoreFoundation reads resolve applicable user/ByHost/managed preferences; a final readable, typed, explicitly unforced own-user configuration fallback is labelled separately from effective runtime state. NULL/invalid values never become secure defaults. Automatic update checking uses native status or scoped machine preferences; other update-installation checks retain explicit configuration scope. Retain inaccessible evidence and agree on scope with the owner. See [macOS live collection troubleshooting](macos-live-collection.md) and the [current collector investigation](macos-remaining-four.md). Native release/architecture compatibility still requires acceptance on the receiving Mac.
 
 `--allow-elevated-read` applies only to native local macOS collection, including matching auto-detection. Passing it is explicit per-run operator consent; the CLI lists the authorized getters before assessment. It permits noninteractive `sudo -n -k --` for exactly `/usr/sbin/systemsetup -getremotelogin`, `/usr/sbin/systemsetup -getusingnetworktime` and `/usr/sbin/softwareupdate --schedule`, with no setting argument. The collector first tries reliable unprivileged sources, then retries only a recognized permission-denied status that remains unresolved. All retries use closed stdin and a ten-second timeout. User/ByHost/managed preference resolution remains in the invoking user's unelevated context.
 
@@ -198,7 +200,7 @@ An authorized network-time getter can establish MAC-012 On/Off without inferring
 
 ### Remote operator sessions
 
-For Windows/macOS, first obtain an authorized terminal session using the organization's tooling, install the reviewed source and dependencies **on the target**, then run its matching `--profile ... --local` command there. CyberAssess does not connect to that target itself. `--host/--user/--key` select only the Ubuntu SSH workflow; combining them with Windows/macOS is rejected. Transfer the paired output files securely for viewing when the target has no desktop browser.
+For Windows/macOS, first obtain an authorized terminal session using the organization's tooling, install the reviewed source and dependencies **on the target**, then run its matching `--profile ... --local` command there. CyberAssess does not connect to that target itself. A remote macOS session does not automatically establish the required console-user screen-lock context; unresolved context remains ERROR. `--host/--user/--key` select only the Ubuntu SSH workflow; combining them with Windows/macOS is rejected. Transfer the paired output files securely for viewing when the target has no desktop browser.
 
 ## Dependency refresh and reproducibility
 

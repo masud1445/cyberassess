@@ -3,10 +3,35 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import re
+import time
 
 import paramiko
 
 from cyberassess.timestamps import collection_clock
+
+
+_PACKAGE_STATE = r"""
+package_state() {
+    package="$1"
+    status="$(LC_ALL=C dpkg-query -W -f='${Status}' "$package" 2>&1)"
+    code=$?
+    if [ "$code" -eq 0 ]; then
+        case "$status" in
+            'unknown ok installed'|'install ok installed'|'hold ok installed'|\
+            'deinstall ok installed'|'purge ok installed') echo true ;;
+            'unknown ok not-installed'|'install ok not-installed'|'hold ok not-installed'|\
+            'deinstall ok not-installed'|'purge ok not-installed'|\
+            'unknown ok config-files'|'install ok config-files'|'hold ok config-files'|\
+            'deinstall ok config-files'|'purge ok config-files') echo false ;;
+            *) return 1 ;;
+        esac
+    elif [ "$code" -eq 1 ] && [ "$status" = "dpkg-query: no packages found matching $package" ]; then
+        echo false
+    else
+        return 1
+    fi
+}
+"""
 
 
 class CollectionError(RuntimeError):
@@ -79,60 +104,45 @@ class SSHCollector:
         stdout, stderr and exit code.
         """
 
-        _stdin, stdout, stderr = (
-            client.exec_command(
-                command,
-                timeout=20,
-            )
-        )
+        channel = None
+        try:
+            _stdin, stdout, stderr = client.exec_command(command, timeout=20)
+            channel = stdout.channel
+            # Drain the bounded query summaries before awaiting status; waiting
+            # first can deadlock a full SSH receive window. Paramiko bounds
+            # channel I/O separately; this deadline bounds the later status wait.
+            out = stdout.read().decode("utf-8", errors="replace").strip()
+            err = stderr.read().decode("utf-8", errors="replace").strip()
+            deadline = time.monotonic() + 20
+            while not channel.exit_status_ready():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Read-only SSH exit status unavailable.")
+                time.sleep(min(0.05, remaining))
+            exit_code = channel.recv_exit_status()
+        except (OSError, paramiko.SSHException) as exc:
+            if channel is not None:
+                try:
+                    channel.close()
+                except (OSError, paramiko.SSHException):
+                    pass
+            return {
+                "exit_code": 124 if isinstance(exc, TimeoutError) else 255,
+                "stdout": "",
+                "stderr": "Unavailable: read-only SSH command could not complete reliably.",
+            }
+        return {"exit_code": exit_code, "stdout": out, "stderr": err}
 
-        exit_code = (
-            stdout.channel.recv_exit_status()
-        )
-
-        out = (
-            stdout.read()
-            .decode(
-                "utf-8",
-                errors="replace",
-            )
-            .strip()
-        )
-
-        err = (
-            stderr.read()
-            .decode(
-                "utf-8",
-                errors="replace",
-            )
-            .strip()
-        )
-
-        return {
-            "exit_code": exit_code,
-            "stdout": out,
-            "stderr": err,
-        }
 
 
     @staticmethod
-    def _first_number(
+    def _integer(
         text: str,
     ) -> int | None:
-        """
-        Extract the first integer from text.
-        """
-
-        match = re.search(
-            r"(\d+)",
-            text or "",
-        )
-
-        if match:
-            return int(
-                match.group(1)
-            )
-
+        """Accept a complete bounded ASCII integer, never digits in diagnostics."""
+        if isinstance(text, str) and re.fullmatch(r"[0-9]{1,10}", text):
+            value = int(text)
+            return value if value <= 2147483647 else None
         return None
 
 
@@ -140,35 +150,25 @@ class SSHCollector:
     def _yes_no_to_bool(
         value: str,
     ) -> bool | None:
-        """
-        Convert common yes/no values to bool.
-        """
+        """Read the exact normalized Boolean emitted by the fixed queries."""
+        return {"true": True, "false": False}.get(value) if isinstance(value, str) else None
 
-        normalized = (
-            str(value)
-            .strip()
-            .lower()
+    @staticmethod
+    def _successful(result: dict) -> bool:
+        return (
+            type(result.get("exit_code")) is int and result["exit_code"] == 0
+            and isinstance(result.get("stdout"), str)
+            and isinstance(result.get("stderr"), str) and not result["stderr"].strip()
         )
 
-        if normalized in {
-            "yes",
-            "true",
-            "1",
-            "enabled",
-            "active",
-        }:
-            return True
-
-        if normalized in {
-            "no",
-            "false",
-            "0",
-            "disabled",
-            "inactive",
-        }:
-            return False
-
-        return None
+    @classmethod
+    def _scalar_result(cls, result: dict, parser) -> dict:
+        """Keep typed scalar summaries, not failed or malformed native output."""
+        value = parser(result["stdout"]) if cls._successful(result) else None
+        if value is None:
+            return {"exit_code": 1, "stdout": "", "stderr": "Unavailable: read-only Ubuntu query failed or returned ambiguous evidence."}
+        text = str(value).lower() if isinstance(value, bool) else str(value)
+        return {"exit_code": 0, "stdout": text, "stderr": ""}
 
 
     def collect(
@@ -211,53 +211,54 @@ class SSHCollector:
             sshd = self._run(
                 client,
                 r"""
-                sudo -n /usr/sbin/sshd -T 2>/dev/null |
-                awk '
-                $1=="permitrootlogin" {
-                    a=$2
-                }
-                $1=="passwordauthentication" {
-                    b=$2
-                }
-                $1=="maxauthtries" {
-                    c=$2
-                }
-                $1=="x11forwarding" {
-                    d=$2
-                }
+                configuration="$(sudo -n /usr/sbin/sshd -T 2>/dev/null)" || exit 1
+                printf '%s\n' "$configuration" | awk '
+                $1=="permitrootlogin" || $1=="passwordauthentication" ||
+                $1=="maxauthtries" || $1=="x11forwarding" ||
                 $1=="clientaliveinterval" {
-                    e=$2
+                    if (NF != 2 || seen[$1]++) invalid=1
+                    values[$1]=$2
                 }
                 END {
-                    print "PermitRootLogin=" a;
-                    print "PasswordAuthentication=" b;
-                    print "MaxAuthTries=" c;
-                    print "X11Forwarding=" d;
-                    print "ClientAliveInterval=" e
+                    if (invalid) exit 1
+                    print "PermitRootLogin=" values["permitrootlogin"];
+                    print "PasswordAuthentication=" values["passwordauthentication"];
+                    print "MaxAuthTries=" values["maxauthtries"];
+                    print "X11Forwarding=" values["x11forwarding"];
+                    print "ClientAliveInterval=" values["clientaliveinterval"]
                 }'
                 """,
             )
 
-            sshd_map: dict[str, str] = {}
-
-            if sshd["exit_code"] == 0:
-
-                for line in (
-                    sshd["stdout"]
-                    .splitlines()
+            sshd_map = {}
+            sshd_ok = self._successful(sshd)
+            known_fields = {"PermitRootLogin", "PasswordAuthentication", "MaxAuthTries", "X11Forwarding", "ClientAliveInterval"}
+            if sshd_ok:
+                for line in sshd["stdout"].splitlines():
+                    key, separator, value = line.partition("=")
+                    if not separator or key not in known_fields or key in sshd_map:
+                        sshd_ok = False
+                        break
+                    sshd_map[key] = value
+                sshd_ok = sshd_ok and set(sshd_map) == known_fields
+            if sshd_ok:
+                for key, allowed in (
+                    ("PermitRootLogin", {"yes", "no", "prohibit-password", "without-password", "forced-commands-only"}),
+                    ("PasswordAuthentication", {"yes", "no"}),
+                    ("X11Forwarding", {"yes", "no"}),
                 ):
-
-                    if "=" in line:
-                        key, value = (
-                            line.split(
-                                "=",
-                                1,
-                            )
-                        )
-
-                        sshd_map[
-                            key.strip()
-                        ] = value.strip()
+                    if sshd_map[key] not in allowed:
+                        sshd_map[key] = None
+                for key in ("MaxAuthTries", "ClientAliveInterval"):
+                    value = self._integer(sshd_map[key])
+                    sshd_map[key] = str(value) if value is not None else None
+                sshd = {"exit_code": 0, "stdout": "\n".join(
+                    key + "=" + (str(sshd_map[key]) if sshd_map[key] is not None else "Unknown")
+                    for key in ("PermitRootLogin", "PasswordAuthentication", "MaxAuthTries", "X11Forwarding", "ClientAliveInterval")
+                ), "stderr": ""}
+            else:
+                sshd_map = {}
+                sshd = {"exit_code": 1, "stdout": "", "stderr": "Unavailable: effective SSH configuration could not be read reliably."}
 
 
             # ==================================================
@@ -266,27 +267,18 @@ class SSHCollector:
 
             firewall = self._run(
                 client,
-                r"""
+                _PACKAGE_STATE + r"""
                 if command -v ufw >/dev/null 2>&1; then
-
-                    status="$(
-                        sudo -n ufw status 2>/dev/null |
-                        head -n 1
-                    )"
-
-                    case "$status" in
-                        *inactive*)
-                            echo inactive
-                            ;;
-                        *active*)
-                            echo active
-                            ;;
-                        *)
-                            echo unknown
-                            ;;
+                    status="$(LC_ALL=C sudo -n ufw status 2>/dev/null)" || exit 1
+                    first="$(printf '%s\n' "$status" | head -n 1)"
+                    case "$first" in
+                        'Status: active') echo active ;;
+                        'Status: inactive') echo inactive ;;
+                        *) exit 1 ;;
                     esac
-
                 else
+                    state="$(package_state ufw)" || exit 1
+                    [ "$state" = false ] || exit 1
                     echo not_installed
                 fi
                 """,
@@ -350,49 +342,96 @@ class SSHCollector:
             password_policy = self._run(
                 client,
                 r"""
-                (
-                    grep -RhE \
-                    '^[[:space:]]*minlen[[:space:]]*=' \
-                    /etc/security/pwquality.conf \
-                    /etc/security/pwquality.conf.d \
-                    2>/dev/null |
-                    tail -n 1 |
-                    sed -E \
-                    's/.*=[[:space:]]*([0-9]+).*/\1/'
-                )
+                # Absence is meaningful only after all relevant directories and
+                # existing files were readable. Conflicting explicit values are
+                # not resolved by guessing file/PAM precedence.
+                [ -r /etc/security ] && [ -x /etc/security ] || exit 1
+                if [ -L /etc/security/pwquality.conf.d ] && [ ! -e /etc/security/pwquality.conf.d ]; then
+                    exit 1
+                fi
+                observations=''
+                for file in /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf
+                do
+                    if [ "$file" != /etc/security/pwquality.conf ]; then
+                        if [ -e /etc/security/pwquality.conf.d ]; then
+                            [ -d /etc/security/pwquality.conf.d ] &&
+                            [ -r /etc/security/pwquality.conf.d ] &&
+                            [ -x /etc/security/pwquality.conf.d ] || exit 1
+                        fi
+                    fi
+                    if [ ! -e "$file" ]; then
+                        [ ! -L "$file" ] || exit 1
+                        continue
+                    fi
+                    [ -f "$file" ] && [ -r "$file" ] || exit 1
+                    lines="$(grep -hE '^[[:space:]]*minlen[[:space:]]*=' "$file" 2>/dev/null)"
+                    status=$?
+                    [ "$status" -eq 0 ] || [ "$status" -eq 1 ] || exit 1
+                    observations="$observations
+$lines"
+                done
+                printf '%s\n' "$observations" | awk '
+                /^[[:space:]]*minlen[[:space:]]*=/ {
+                    value=$0
+                    sub(/^[[:space:]]*minlen[[:space:]]*=[[:space:]]*/, "", value)
+                    sub(/[[:space:]]*#.*/, "", value)
+                    sub(/[[:space:]]*$/, "", value)
+                    if (value !~ /^[0-9]+$/) invalid=1
+                    if (found && value+0 != previous+0) invalid=1
+                    previous=value
+                    found=1
+                }
+                END {
+                    if (invalid) exit 1
+                    if (found) print previous
+                }'
                 """,
             )
 
-            minimum_length = (
-                self._first_number(
-                    password_policy["stdout"]
-                )
+            pam_policy = self._run(
+                client,
+                r"""
+                [ -f /etc/pam.d/common-password ] &&
+                [ -r /etc/pam.d/common-password ] || exit 1
+                configuration="$(cat /etc/pam.d/common-password 2>/dev/null)" || exit 1
+                printf '%s\n' "$configuration" | awk '
+                /^[[:space:]]*#/ { next }
+                {
+                    sub(/[[:space:]]*#.*/, "")
+                    if ($1!="password" && $1!="-password") next
+                    module=0
+                    for (field=1; field<=NF; field++) {
+                        if ($field ~ /(^|\/)pam_pwquality[.]so$/) module=field
+                    }
+                    if (!module) next
+                    for (field=module+1; field<=NF; field++) {
+                        if ($field ~ /^#/) break
+                        if ($field ~ /^minlen=/) {
+                            value=$field
+                            sub(/^minlen=/, "", value)
+                            if (value !~ /^[0-9]+$/ || found++) invalid=1
+                            previous=value
+                        }
+                    }
+                }
+                END {
+                    if (invalid) exit 1
+                    if (found) print previous
+                }'
+                """,
             )
 
-
-            # Check PAM if pwquality config
-            # did not contain an explicit minlen.
-
-            if minimum_length is None:
-
-                pam_policy = self._run(
-                    client,
-                    r"""
-                    grep -E \
-                    'pam_pwquality\.so.*minlen=' \
-                    /etc/pam.d/common-password \
-                    2>/dev/null |
-                    tail -n 1 |
-                    sed -nE \
-                    's/.*minlen=([0-9]+).*/\1/p'
-                    """,
-                )
-
-                minimum_length = (
-                    self._first_number(
-                        pam_policy["stdout"]
-                    )
-                )
+            file_ok = self._successful(password_policy)
+            pam_ok = self._successful(pam_policy)
+            file_minimum = self._integer(password_policy["stdout"]) if file_ok and password_policy["stdout"] else None
+            pam_minimum = self._integer(pam_policy["stdout"]) if pam_ok and pam_policy["stdout"] else None
+            password_policy_ok = (
+                file_ok and pam_ok
+                and (not password_policy["stdout"] or file_minimum is not None)
+                and (not pam_policy["stdout"] or pam_minimum is not None)
+                and (file_minimum is None or pam_minimum is None or file_minimum == pam_minimum)
+            )
+            minimum_length = (pam_minimum if pam_minimum is not None else file_minimum) if password_policy_ok else None
 
 
             # ==================================================
@@ -402,21 +441,20 @@ class SSHCollector:
             auditd = self._run(
                 client,
                 r"""
-                if systemctl is-active \
-                    --quiet auditd \
-                    2>/dev/null
-                then
+                LC_ALL=C systemctl is-active --quiet auditd 2>/dev/null
+                state=$?
+                if [ "$state" -eq 0 ]; then
                     echo active
-
-                elif systemctl list-unit-files \
-                    auditd.service \
-                    2>/dev/null |
-                    grep -q '^auditd\.service'
-                then
-                    echo inactive
-
-                else
+                    exit 0
+                fi
+                [ "$state" -eq 3 ] || [ "$state" -eq 4 ] || exit 1
+                units="$(LC_ALL=C systemctl list-unit-files auditd.service --no-legend --no-pager 2>/dev/null)" || exit 1
+                if [ -z "$units" ]; then
                     echo not_installed
+                elif [ "$state" -eq 3 ] && printf '%s\n' "$units" | grep -Eq '^auditd[.]service[[:space:]]'; then
+                    echo inactive
+                else
+                    exit 1
                 fi
                 """,
             )
@@ -428,37 +466,30 @@ class SSHCollector:
 
             updates = self._run(
                 client,
-                r"""
-                if ! dpkg-query \
-                    -W \
-                    -f='${Status}' \
-                    unattended-upgrades \
-                    2>/dev/null |
-                    grep -q \
-                    'install ok installed'
-                then
+                _PACKAGE_STATE + r"""
+                installed="$(package_state unattended-upgrades)" || exit 1
+                if [ "$installed" = false ]; then
                     echo false
                     exit 0
                 fi
-
-                if apt-config dump \
-                    2>/dev/null |
-                    grep -Eq \
-                    'APT::Periodic::Unattended-Upgrade[[:space:]]+"1"'
-                then
-                    echo true
-                else
-                    echo false
-                fi
+                configuration="$(LC_ALL=C apt-config dump 2>/dev/null)" || exit 1
+                [ -n "$configuration" ] || exit 1
+                printf '%s\n' "$configuration" | awk '
+                NF {
+                    rows++
+                    if ($0 !~ /^[[:space:]]*[^[:space:]"]+[[:space:]]+"([^"\\]|\\.)*";[[:space:]]*$/) invalid=1
+                }
+                $1=="APT::Periodic::Unattended-Upgrade" {
+                    count++
+                    if (NF != 2 || $2 !~ /^"[0-9]+";$/) invalid=1
+                    if ($2=="\"1\";") enabled=1
+                }
+                END {
+                    if (invalid || !rows || count>1) exit 1
+                    print enabled ? "true" : "false"
+                }'
                 """,
             )
-
-            updates_enabled = (
-                self._yes_no_to_bool(
-                    updates["stdout"]
-                )
-            )
-
 
             # ==================================================
             # Time synchronization
@@ -467,67 +498,46 @@ class SSHCollector:
             time_sync = self._run(
                 client,
                 r"""
-                # Method 1: systemd/timedatectl
-                synced="$(
-                    timedatectl show \
-                    -p NTPSynchronized \
-                    --value \
-                    2>/dev/null
-                )"
-
-                if [ "$synced" = "yes" ] || [ "$synced" = "true" ]; then
-                    echo active
-                    exit 0
+                LC_ALL=C
+                export LC_ALL
+                synced="$(LC_ALL=C timedatectl show -p NTPSynchronized --value 2>/dev/null)"
+                status=$?
+                known_inactive=false
+                if [ "$status" -eq 0 ]; then
+                    case "$synced" in
+                        yes|true) echo active; exit 0 ;;
+                        no|false) known_inactive=true ;;
+                        *) exit 1 ;;
+                    esac
                 fi
-
-                # Method 2: Chrony
-                if command -v chronyc >/dev/null 2>&1 \
-                   && systemctl is-active --quiet chrony 2>/dev/null
-                then
-                    tracking="$(chronyc tracking 2>/dev/null)"
-
-                    leap="$(
-                        printf '%s\n' "$tracking" |
-                        awk -F: '/Leap status/ {
-                            gsub(/^[ \t]+|[ \t]+$/, "", $2)
-                            print $2
+                if command -v chronyc >/dev/null 2>&1; then
+                    LC_ALL=C systemctl is-active --quiet chrony 2>/dev/null
+                    service=$?
+                    if [ "$service" -eq 0 ]; then
+                        tracking="$(LC_ALL=C chronyc tracking 2>/dev/null)" || exit 1
+                        printf '%s\n' "$tracking" | awk -F: '
+                        /^[ \t]*Reference ID[ \t]*:/ { refs++; reference=$2; sub(/^[ \t]+/, "", reference); split(reference, parts, /[ \t]+/); reference=parts[1] }
+                        /^[ \t]*Leap status[ \t]*:/ { leaps++; leap=$2; gsub(/^[ \t]+|[ \t]+$/, "", leap) }
+                        /^[ \t]*System time[ \t]*:/ {
+                            times++; time=$2; gsub(/^[ \t]+|[ \t]+$/, "", time)
+                            fields=split(time, parts, /[ \t]+/); offset=parts[1]
+                            if (fields!=6 || parts[2]!="seconds" || (parts[3]!="fast" && parts[3]!="slow") || parts[4]!="of" || parts[5]!="NTP" || parts[6]!="time") invalid=1
+                        }
+                        END {
+                            if (invalid || refs!=1 || leaps!=1 || times!=1) exit 1
+                            if (reference!="0" && (reference !~ /^[0-9A-Fa-f]+$/ || length(reference)!=8)) exit 1
+                            if (offset !~ /^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/ || length(offset)>40) exit 1
+                            value=offset+0
+                            if (value>1e12 || value< -1e12) exit 1
+                            if (leap!="Normal" && leap!="Not synchronised") exit 1
+                            if (leap=="Normal" && (reference=="00000000" || reference=="0")) exit 1
+                            if (value<0) value=-value
+                            print (leap=="Normal" && value<=5.0) ? "active" : "inactive"
                         }'
-                    )"
-
-                    reference="$(
-                        printf '%s\n' "$tracking" |
-                        awk -F: '/Reference ID/ {
-                            gsub(/^[ \t]+|[ \t]+$/, "", $2)
-                            print $2
-                        }'
-                    )"
-
-                    offset="$(
-                        printf '%s\n' "$tracking" |
-                        awk '/System time/ {
-                            print $4
-                        }'
-                    )"
-
-                    if [ "$leap" = "Normal" ] \
-                       && [ -n "$reference" ] \
-                       && [ "$reference" != "0" ] \
-                       && [ -n "$offset" ]
-                    then
-                        if awk -v value="$offset" 'BEGIN {
-                            if (value < 0) value = -value
-                            exit !(value <= 5.0)
-                        }'
-                        then
-                            echo active
-                            exit 0
-                        fi
+                        exit $?
                     fi
-
-                    echo inactive
-                    exit 0
                 fi
-
+                [ "$known_inactive" = true ] || exit 1
                 echo inactive
                 """,
             )
@@ -539,41 +549,52 @@ class SSHCollector:
 
             telnet = self._run(
                 client,
-                r"""
+                _PACKAGE_STATE + r"""
                 installed=false
-
-                for package in \
-                    telnetd \
-                    inetutils-telnetd
+                unavailable=false
+                for package in telnetd inetutils-telnetd
                 do
-
-                    if dpkg-query \
-                        -W \
-                        -f='${Status}' \
-                        "$package" \
-                        2>/dev/null |
-                        grep -q \
-                        'install ok installed'
-                    then
+                    state="$(package_state "$package")"
+                    if [ "$?" -ne 0 ]; then
+                        unavailable=true
+                    elif [ "$state" = true ]; then
                         installed=true
                     fi
-
                 done
-
-                echo "$installed"
+                # One confirmed installed server is conclusive. Secure absence
+                # requires both package queries to have succeeded reliably.
+                if [ "$installed" = true ]; then
+                    echo true
+                elif [ "$unavailable" = true ]; then
+                    exit 1
+                else
+                    echo false
+                fi
                 """,
             )
-
-            telnet_installed = (
-                self._yes_no_to_bool(
-                    telnet["stdout"]
-                )
-            )
-
 
             # ==================================================
             # Build structured evidence
             # ==================================================
+
+            # The fixed scripts emit bounded summaries; never extract digits
+            # from diagnostics or treat an unknown scalar as a security state.
+            firewall = self._scalar_result(firewall, lambda value: value if value in {"active", "inactive", "not_installed"} else None)
+            auditd = self._scalar_result(auditd, lambda value: value if value in {"active", "inactive", "not_installed"} else None)
+            time_sync = self._scalar_result(time_sync, lambda value: value if value in {"active", "inactive"} else None)
+            updates = self._scalar_result(updates, self._yes_no_to_bool)
+            telnet = self._scalar_result(telnet, self._yes_no_to_bool)
+            updates_enabled = self._yes_no_to_bool(updates["stdout"])
+            telnet_installed = self._yes_no_to_bool(telnet["stdout"])
+            for query_name in ("shadow_mode", "passwd_mode"):
+                result = shadow_mode if query_name == "shadow_mode" else passwd_mode
+                result = self._scalar_result(result, lambda value: value if re.fullmatch(r"[0-7]{1,4}", value) else None)
+                if query_name == "shadow_mode":
+                    shadow_mode = result
+                else:
+                    passwd_mode = result
+            empty_passwords = self._scalar_result(empty_passwords, self._integer)
+            uid_zero = self._scalar_result(uid_zero, self._integer)
 
             # Metadata only: this unprivileged getter does not affect any
             # security value or replace unavailable target timezone evidence.
@@ -603,6 +624,13 @@ class SSHCollector:
 
                     "read_only":
                         True,
+
+                    "scope":
+                        "Authorized Ubuntu target; selected configuration, package inventory and supported service-status checks.",
+
+                    "limitations":
+                        "Password checks compare explicit pwquality/PAM minlen observations, not complete PAM execution or enforcement. "
+                        "Unreadable, malformed, unsupported or conflicting evidence remains ERROR.",
                 },
 
                 "evidence": {
@@ -623,7 +651,7 @@ class SSHCollector:
                             ),
 
                         "MaxAuthTries":
-                            self._first_number(
+                            self._integer(
                                 sshd_map.get(
                                     "MaxAuthTries",
                                     "",
@@ -636,7 +664,7 @@ class SSHCollector:
                             ),
 
                         "ClientAliveInterval":
-                            self._first_number(
+                            self._integer(
                                 sshd_map.get(
                                     "ClientAliveInterval",
                                     "",
@@ -723,14 +751,14 @@ class SSHCollector:
 
                     "accounts": {
                         "empty_password_count":
-                            self._first_number(
+                            self._integer(
                                 empty_passwords[
                                     "stdout"
                                 ]
                             ),
 
                         "uid0_nonroot_count":
-                            self._first_number(
+                            self._integer(
                                 uid_zero[
                                     "stdout"
                                 ]
@@ -766,11 +794,10 @@ class SSHCollector:
                             minimum_length,
 
                         "configured":
-                            minimum_length
-                            is not None,
+                            minimum_length is not None if password_policy_ok else None,
 
                         "_collection_ok":
-                            True,
+                            password_policy_ok,
 
                         "_raw":
                             (
@@ -779,8 +806,9 @@ class SSHCollector:
                                 if minimum_length
                                 is not None
                                 else
-                                "No explicit minimum "
-                                "password length detected"
+                                "No explicit minimum password length detected"
+                                if password_policy_ok else
+                                "Unavailable: password configuration is unreadable, malformed or contradictory."
                             ),
                     },
 

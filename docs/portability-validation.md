@@ -4,7 +4,87 @@ Separate offline/runtime validation from native security collection. A mocked
 fixture, a passing dependency installation or an HTML preview does not establish
 live access, correct target permissions or effective host security configuration.
 
-## Final production-readiness review
+## Final professional QA and requirement audit
+
+Audited baseline: `5e898bd329d92b49baf37fecc9a1de521e40eb97`, **1,328 passing
+tests**, with all five hosted jobs successful in
+[Portability run 41121239929](https://github.com/masud1445/cyberassess/actions/runs/41121239929).
+The earlier review sections below are historical records; this audit supersedes
+claims there that Ubuntu command failure handling is unchanged.
+
+| Audit classification | Finding and disposition | Evidence |
+| --- | --- | --- |
+| Already correct | Native 15/13/12 profile selection, unsupported-OS rejection, separate Ubuntu SSH mode, fresh per-run reads, control definitions/NIST IDs, severity formula, read-only native queries, explicit macOS privileged-read consent and current dashboard design. | Existing platform/CLI/collector/scoring/report suites; baseline CI; unchanged control/evaluator files. |
+| Genuine defect corrected | Ubuntu shell pipelines/wrappers could hide failed upstream reads, including a false Telnet PASS; malformed numeric/Chrony evidence and unreadable password settings could be misclassified. Capture status before filtering, require bounded whole scalar values, distinguish readable absence from unavailable evidence, and retain ERROR for contradictory password sources. | `test_ubuntu_safe_failure.py`, strengthened Ubuntu compatibility failures, manual fixed-command stubs and POSIX syntax checks. |
+| Genuine boundary defect corrected | Deeply nested JSON could raise an uncaught recursion error and abort collection/reporting. Unexpected output now follows the existing unavailable/ERROR path without retaining the raw payload. | `test_json_depth_failures.py`; other controls continue to evaluate. |
+| Genuine provenance defect corrected | The profile adapter could label known samples live and substitute completion time for an absent collection clock. All live CLI entry points reject known sample markers; missing collection time remains absent. | `test_report_provenance_guard.py`; existing fixture data/assertions retained with accurately labelled injected-source metadata. |
+| Genuine comparison defect corrected | Historical comparison output inferred remediation/authorization and could compare incompatible snapshots. Reject known mismatches and describe recorded transitions, separating ERROR-to-PASS from FAIL-to-PASS. | `test_comparison_report.py`; fixed paths/CSS and valid 54.3-to-100 comparison preserved; source reports unchanged. |
+| Minor improvements | Completed the truncated lab manual; corrected stale platform/console-user descriptions and historical test-count labels; added official traceability, all-profile coverage and one canonical supervisor checklist. Ignore the documented diagnostic output and generated audit PDFs. | [Supervisor handover](HANDOVER.md), [control coverage](control_master_table.md), setup/pitch/lab/diagnostic docs; Markdown/link and ignore checks. |
+| Unverified/native acceptance | Receiving-machine security state, exact read privileges, firmware/edition support, modern macOS unavailable state and owner approval for report distribution require separate acceptance. | [Final Acceptance Checklist](HANDOVER.md#final-acceptance-checklist); no new live SSH credentials or authorized native Windows/macOS target supplied. |
+
+### Verification for this audit
+
+The reviewed suite has **1,493 passing tests** on both Python **3.12.14** and
+**3.13.5** on this Linux runner, compared with 1,328 at the audited baseline.
+The 165 additions cover Ubuntu safe failures (99), deeply nested JSON (7),
+sample/live provenance and collection-clock absence (32), and historical
+comparison integrity (27). No test was skipped or weakened. Dependency checks,
+constrained-version portability checks and POSIX installer syntax pass. All
+1,493 test identifiers remain below Windows' environment-value length limit
+(maximum 4,235 characters); large JSON payloads are constructed inside tests.
+
+Ubuntu, Windows, macOS and legacy demos retain their recorded scores and counts.
+Chromium checks of these four reports plus synthetic all-pass and unavailable
+states pass at 320, 390, 768, 1024 and 1440 pixels, with no document overflow or
+external requests. Navigation targets, keyboard evidence disclosures, JSON/HTML
+counts and scores, and A4 exports containing every control ID pass. Desktop,
+mobile and printed pages were visually reviewed; the existing report CSS is
+unchanged. These preview artifacts are local ignored outputs, not live evidence.
+
+The exact pushed commit and new five-job hosted workflow outcome are recorded
+in the final delivery after CI completes. Verify that revision through the
+[feature-branch workflow history](https://github.com/masud1445/cyberassess/actions/workflows/portability.yml?query=branch%3Afeature%2Fmultiplatform-cyberassess).
+Run `python -m pip check`, `python -m pytest -q`,
+`python scripts/check_portability.py` and the three profile demos from the
+reviewed checkout. The existing requirements/constraints and supported Python
+3.10–3.13 installation approach remain unchanged. No boto3/cloud dependency was
+added; cloud scanning was not an established mandatory requirement.
+
+Injected tests and controlled shell stubs do not establish actual host security
+correctness. In particular, re-run the strengthened Ubuntu collector on the
+approved real target before relying on a new score. Successful readable absence
+of an explicit password minimum remains the existing Not configured FAIL;
+unreadable, malformed or conflicting evidence is ERROR. The check is limited
+to explicit password-quality configuration, not complete effective PAM policy.
+SSH channel reads retain Paramiko's 20-second I/O timeout; the subsequent
+exit-status wait has its own 20-second deadline. These are separate bounds,
+not an overall assessment or command wall-clock deadline. See the
+[SSH preflight and limitations](ssh-target-setup.md).
+
+MAC-005 and MAC-012 source selection and conditions remain unchanged. Recent
+macOS can expose no reliable automatic-check scalar; network time can require
+additional privileges. Neither missing preferences nor a running service becomes
+PASS, and no new automatic sudo, setting change or remediation is introduced.
+Existing one-second report filename/cross-save naming limitations remain; retain
+the two printed paths and use a distinct output directory for each assessment.
+
+### Privacy and historical evidence
+
+The intentionally tracked `FINAL_LIVE_VALIDATION_100.json`, its HTML companion
+and `CyberAssess_Final_Live_Assessment_Report.pdf` are historical Ubuntu lab
+artifacts. They contain target/account identifiers and private-network addressing;
+they are not anonymized examples or evidence of this revision's native accuracy.
+Their bytes/history are preserved. Pattern checks found no private keys or
+recognized credential/token material in them, but that is not complete sanitization.
+Owner review is required before further distribution, including supervisor packs.
+
+No new raw live report, diagnostic document, credential or private key is staged
+for publication. The default `macos-diagnostics.json` and generated `audit_*.pdf`
+outputs are ignored; renamed/manual outputs still need explicit review. Retain
+useful fixtures, prior validation records and investigations with their historical
+scope rather than deleting evidence or rewriting Git history.
+
+## Earlier production-readiness review (5e898bd)
 
 Review baseline: `f11662e9fe1421ac91ae1182326e16230e5d235a`, **1,266 passing tests**.
 The updated suite has **1,328 tests**. The 62 additions cover actual collector

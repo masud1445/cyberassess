@@ -173,7 +173,7 @@ def _preference_payload(text: str) -> dict[str, Any] | None:
         return None
     try:
         value = json.loads(text, object_pairs_hook=unique, parse_constant=invalid_constant)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return None
     if not isinstance(value, dict) or type(value.get("available")) is not bool:
         return None

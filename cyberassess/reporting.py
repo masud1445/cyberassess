@@ -142,6 +142,11 @@ _MACOS_EVIDENCE_SOURCES = {
     "update_check", "update_download", "security_updates", "system_data_updates",
     "remote_login", "screen_lock", "screen_lock_delay", "network_time",
 }
+_UBUNTU_DIAGNOSTICS = {
+    "Unavailable: read-only Ubuntu query failed or returned ambiguous evidence.",
+    "Unavailable: effective SSH configuration could not be read reliably.",
+    "Unavailable: password configuration is unreadable, malformed or contradictory.",
+}
 
 
 def _safe_raw_evidence(result: dict) -> str:
@@ -153,7 +158,7 @@ def _safe_raw_evidence(result: dict) -> str:
         return ""
     try:
         parsed = json.loads(raw)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         parsed = None
     if isinstance(parsed, dict):
         approved = {}
@@ -187,7 +192,10 @@ def _collection_diagnostic(result: dict) -> str:
         ("Read-only query ", "PowerShell could not run;")
     )
     known_macos = profile == "macos" and source in _MACOS_EVIDENCE_SOURCES and raw.startswith("Unavailable:")
-    return _evidence_text(raw, 800) if known_windows or known_macos else ""
+    known_ubuntu = profile == "ubuntu" and source in {
+        "sshd", "firewall", "files", "accounts", "password_policy", "auditd", "updates", "time_sync", "services",
+    } and raw in _UBUNTU_DIAGNOSTICS
+    return _evidence_text(raw, 800) if known_windows or known_macos or known_ubuntu else ""
 
 
 def _fix_command(result: dict, ubuntu: bool = True) -> str:

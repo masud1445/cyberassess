@@ -1,6 +1,10 @@
 import json
 import html
+import math
 from pathlib import Path
+
+from cyberassess.evaluator import SEVERITY_WEIGHTS
+from cyberassess.timestamps import aware_datetime, display_timestamp
 
 
 BEFORE_FILE = Path("reports/BEFORE_54.3.json")
@@ -19,16 +23,125 @@ def load_report(path):
 
 
 def result_map(report):
-    results = report.get("assessment", {}).get("results", [])
-    return {
-        item.get("control_id"): item
-        for item in results
-        if item.get("control_id")
-    }
+    assessment = report.get("assessment")
+    if not isinstance(assessment, dict):
+        raise ValueError("Comparison requires an assessment object in each snapshot.")
+    results = assessment.get("results", [])
+    if not isinstance(results, list) or not results:
+        raise ValueError("Comparison requires recorded control results in both snapshots.")
+    mapped = {}
+    for item in results:
+        if not isinstance(item, dict) or not isinstance(item.get("control_id"), str) or not item["control_id"].strip():
+            raise ValueError("Comparison requires an unambiguous control identifier for every result.")
+        if item["control_id"] in mapped:
+            raise ValueError("Duplicate control identifiers make the snapshot ambiguous.")
+        if not isinstance(item.get("status"), str) or item["status"] not in {"PASS", "FAIL", "ERROR"}:
+            raise ValueError("Comparison supports only recorded PASS, FAIL and ERROR results.")
+        mapped[item["control_id"]] = item
+    return mapped
+
+
+def recorded(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    if value.lower() in {"unknown", "unknown target", "unknown platform", "not recorded", "not available"} or value.lower().startswith("unknown (local "):
+        return None
+    return value
+
+
+def snapshot_mode(report):
+    collector = report.get("collector") if isinstance(report.get("collector"), dict) else {}
+    method = str(collector.get("method", "")).lower()
+    modes = {value.lower() for value in (report.get("assessment_mode"), collector.get("mode"))
+             if isinstance(value, str) and value.lower() in {"demo", "local", "ssh"}}
+    if collector.get("sample_data") is True or "sample" in method or "demo" in method:
+        modes.add("demo")
+    elif method.startswith("ssh / "):
+        modes.add("ssh")
+    elif method.startswith("local / "):
+        modes.add("local")
+    if "demo" in modes:
+        return "demo"
+    return next(iter(modes)) if len(modes) == 1 else "unknown"
+
+
+def profile_value(report, key):
+    profile = report.get("profile")
+    value = profile.get(key) if isinstance(profile, dict) else None
+    return recorded(str(value)) if type(value) is int else recorded(value)
+
+
+def validate_comparison(before, after):
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise ValueError("Comparison inputs must be assessment objects.")
+    notes = []
+    for key in ("target_name", "platform"):
+        values = [recorded(report.get(key)) for report in (before, after)]
+        if all(values) and values[0].casefold() != values[1].casefold():
+            raise ValueError(f"Snapshots have different recorded {key} values.")
+        if not all(values):
+            notes.append(f"{key} is not recorded in one or both snapshots; identity equivalence is unverified.")
+    for key in ("id", "version"):
+        values = [profile_value(report, key) for report in (before, after)]
+        if all(values) and values[0].casefold() != values[1].casefold():
+            raise ValueError(f"Snapshots have different recorded profile {key} values.")
+        if not all(values):
+            notes.append(f"Profile {key} is not recorded in one or both snapshots; it was not inferred.")
+    modes = [snapshot_mode(report) for report in (before, after)]
+    if "demo" in modes and any(mode in {"local", "ssh"} for mode in modes):
+        raise ValueError("Demonstration and live snapshots cannot be compared as the same assessment source.")
+    if "unknown" in modes:
+        notes.append("Collection source is not recorded consistently in one or both snapshots.")
+    mappings = [result_map(report) for report in (before, after)]
+    if mappings[0].keys() != mappings[1].keys():
+        raise ValueError("Snapshots use different control sets.")
+    for control_id, first in mappings[0].items():
+        second = mappings[1][control_id]
+        for key in ("expected", "severity"):
+            if key in first and key in second and (type(first[key]) is not type(second[key]) or first[key] != second[key]):
+                raise ValueError("Snapshots have different recorded control conditions or scoring weights.")
+    for label, report, results in zip(("Before", "After"), (before, after), mappings):
+        assessment = report["assessment"]
+        counts = {"passed": "PASS", "failed": "FAIL", "errors": "ERROR"}
+        for key, status in counts.items():
+            value = assessment.get(key)
+            if type(value) is not int or value != sum(item["status"] == status for item in results.values()):
+                raise ValueError("Snapshot counts disagree with the recorded control results.")
+        if type(assessment.get("total_controls")) is not int or assessment["total_controls"] != len(results):
+            raise ValueError("Snapshot control total disagrees with its results.")
+        score = assessment.get("compliance_score")
+        try:
+            valid_score = type(score) in (int, float) and math.isfinite(float(score)) and 0 <= float(score) <= 100
+        except (TypeError, ValueError, OverflowError):
+            valid_score = False
+        if not valid_score:
+            raise ValueError("Snapshot score must be a finite percentage from 0 through 100.")
+        weights = [SEVERITY_WEIGHTS.get(item["severity"].upper())
+                   if isinstance(item.get("severity"), str) else None for item in results.values()]
+        if any(weight is None for weight in weights):
+            notes.append(f"{label} snapshot score basis is unverified: severity weights are absent or unsupported.")
+        else:
+            total_weight = sum(weights)
+            passed_weight = sum(weight for item, weight in zip(results.values(), weights) if item["status"] == "PASS")
+            expected_score = round((passed_weight / total_weight) * 100, 1) if total_weight else 0.0
+            if score != expected_score:
+                raise ValueError("Snapshot score disagrees with its recorded results and severity weights.")
+    return mappings, notes
+
+
+def snapshot_time(report):
+    collector = report.get("collector") if isinstance(report.get("collector"), dict) else {}
+    for label, value in (("Collection", report.get("collected_at") or collector.get("collected_at")),
+                         ("Assessment completed", report.get("assessment_completed_at") or collector.get("assessment_completed_at"))):
+        if aware_datetime(value) is not None:
+            return label + ": " + display_timestamp(value, utc=True)
+    return "Not recorded with a timezone"
 
 
 before = load_report(BEFORE_FILE)
 after = load_report(AFTER_FILE)
+(before_results, after_results), comparison_notes = validate_comparison(before, after)
 
 before_assessment = before["assessment"]
 after_assessment = after["assessment"]
@@ -36,9 +149,6 @@ after_assessment = after["assessment"]
 before_score = float(before_assessment["compliance_score"])
 after_score = float(after_assessment["compliance_score"])
 improvement = round(after_score - before_score, 1)
-
-before_results = result_map(before)
-after_results = result_map(after)
 
 fixed_controls = []
 
@@ -133,9 +243,22 @@ for item in fixed_controls:
     )
 
 fixed_rows_html = "\n".join(fixed_rows)
+if not fixed_rows_html:
+    fixed_rows_html = '<tr><td colspan="5">No recorded FAIL or ERROR results changed to PASS.</td></tr>'
 
-target_name = after.get("target_name", "Unknown target")
-platform = after.get("platform", "Unknown platform")
+fail_to_pass = sum(item["before_status"] == "FAIL" for item in fixed_controls)
+error_to_pass = sum(item["before_status"] == "ERROR" for item in fixed_controls)
+
+target_name = recorded(after.get("target_name")) or "Not recorded"
+platform = recorded(after.get("platform")) or "Not recorded"
+mode_labels = {"demo": "Demonstration", "local": "Live local", "ssh": "Live SSH", "unknown": "Not recorded"}
+source_summary = " / ".join(mode_labels[snapshot_mode(report)] for report in (before, after))
+profile_summary = " / ".join(
+    f"{profile_value(report, 'id') or 'Not recorded'} (version {profile_value(report, 'version') or 'not recorded'})"
+    for report in (before, after)
+)
+comparison_limitations = " ".join(comparison_notes) or "Recorded identity, profile and control-set checks agree."
+demonstration_note = "Demonstration snapshot comparison; illustrative results, not live validation." if any(snapshot_mode(report) == "demo" for report in (before, after)) else "Source labels reflect recorded metadata; authorization is not verified by this comparison."
 
 
 html_output = f"""<!DOCTYPE html>
@@ -575,19 +698,25 @@ td {{
 <main class="page">
 
 <section class="header">
-    <h1>CyberAssess — Remediation Comparison</h1>
+    <h1>CyberAssess — Snapshot Comparison</h1>
     <p><strong>Target:</strong> {esc(target_name)}</p>
     <p><strong>Platform:</strong> {esc(platform)}</p>
+    <p><strong>Profile, before / after:</strong> {esc(profile_summary)}</p>
+    <p><strong>Source, before / after:</strong> {esc(source_summary)}</p>
+    <p><strong>Before recorded time:</strong> {esc(snapshot_time(before))}</p>
+    <p><strong>After recorded time:</strong> {esc(snapshot_time(after))}</p>
     <p>
-        Automated read-only compliance assessment comparing
-        the baseline state with the post-remediation state.
+        Comparison of two point-in-time assessment snapshots; this report does
+        not refresh automatically or establish that remediation occurred.
     </p>
+    <p>{esc(demonstration_note)}</p>
+    <p><strong>Comparability:</strong> {esc(comparison_limitations)}</p>
 </section>
 
 <section class="summary-grid">
 
     <div class="card">
-        <div class="score-label">Before remediation</div>
+        <div class="score-label">Before snapshot</div>
         <div class="score before-score">{before_score:.1f}%</div>
 
         <div class="metrics">
@@ -609,7 +738,7 @@ td {{
     </div>
 
     <div class="card">
-        <div class="score-label">After remediation</div>
+        <div class="score-label">After snapshot</div>
         <div class="score after-score">{after_score:.1f}%</div>
 
         <div class="metrics">
@@ -631,8 +760,8 @@ td {{
     </div>
 
     <div class="card">
-        <div class="score-label">Compliance improvement</div>
-        <div class="score improvement">+{improvement:.1f}</div>
+        <div class="score-label">Recorded score change</div>
+        <div class="score improvement">{improvement:+.1f}</div>
 
         <p class="improvement-text">
             percentage points
@@ -640,13 +769,14 @@ td {{
 
         <p class="improvement-detail">
             <strong>{len(fixed_controls)}</strong>
-            controls changed from non-compliant to compliant.
+            controls changed to PASS: {fail_to_pass} from FAIL and
+            {error_to_pass} previously unassessed (ERROR).
         </p>
     </div>
 
 </section>
 
-<h2 class="section-title">Compliance Progress</h2>
+<h2 class="section-title">Weighted Score Comparison</h2>
 
 <section class="card compare-bars">
 
@@ -674,7 +804,7 @@ td {{
 
 </section>
 
-<h2 class="section-title">Controls Remediated</h2>
+<h2 class="section-title">Controls Transitioning to PASS</h2>
 
 <section class="card">
 <table>
@@ -701,14 +831,15 @@ td {{
     <p>
         The initial assessment recorded
         <strong>{before_assessment["passed"]}</strong>
-        compliant controls and
+        controls recorded as PASS,
         <strong>{before_assessment["failed"]}</strong>
-        failed controls, producing a compliance score of
+        as FAIL and <strong>{before_assessment["errors"]}</strong>
+        as ERROR, producing a weighted score of
         <strong>{before_score:.1f}%</strong>.
     </p>
 
     <p>
-        After authorized remediation and reassessment,
+        In the after snapshot,
         <strong>{after_assessment["passed"]}</strong>
         of
         <strong>{after_assessment["total_controls"]}</strong>
@@ -720,17 +851,19 @@ td {{
     </p>
 
     <p>
-        Final compliance score:
+        After snapshot weighted score:
         <strong>{after_score:.1f}%</strong>.
-        Overall improvement:
-        <strong>+{improvement:.1f} percentage points</strong>.
+        Recorded score change:
+        <strong>{improvement:+.1f} percentage points</strong>.
+        ERROR means unavailable evidence, not a confirmed insecure setting.
     </p>
 
 </section>
 
 <footer class="footer">
-    CyberAssess · Read-only assessment checks.
-    Remediation was performed separately on the authorized lab target.
+    CyberAssess · Read-only snapshot comparison; not formal compliance certification.
+    Snapshots do not prove remediation, authorization or the cause of a result change.
+    No target setting or remediation command is executed by this helper.
 </footer>
 
 </main>
@@ -744,5 +877,5 @@ OUTPUT_FILE.write_text(html_output, encoding="utf-8")
 print(f"Comparison report created: {OUTPUT_FILE}")
 print(f"Before: {before_score:.1f}%")
 print(f"After: {after_score:.1f}%")
-print(f"Improvement: +{improvement:.1f} points")
-print(f"Controls fixed: {len(fixed_controls)}")
+print(f"Score change: {improvement:+.1f} points")
+print(f"Transitions to PASS: {len(fixed_controls)} ({fail_to_pass} from FAIL; {error_to_pass} from ERROR)")

@@ -26,6 +26,15 @@ for those profiles and the Ubuntu local mode.
   are assessment subjects. Do not install or enable them merely to make a
   preflight pass: their absence or configuration is evidence to assess.
 
+Failed, malformed or contradictory native reads remain ERROR. The password
+minimum check compares explicit pwquality/PAM `minlen` observations; it does
+not prove the complete PAM stack enforces that minimum for every account.
+Confirmed readable absence retains the existing Not configured FAIL result.
+The SSH channel uses a 20-second I/O timeout and a separate 20-second deadline
+for the later exit-status wait. Neither is a total assessment wall-clock limit.
+Per-command transport failures discard partial output and leave that evidence
+unavailable; they do not trigger a retry, authentication change or remediation.
+
 ## SSH identity on the new laptop
 
 Ask the administrator to authorize the **public** key for a dedicated assessment

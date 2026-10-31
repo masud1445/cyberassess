@@ -4,6 +4,8 @@ CyberAssess is a read-only cybersecurity baseline assessment CLI for authorized 
 
 The project remains aligned with **Internship Pillar 2 / Sub-Track 2.1: Automated Compliance / Baseline Assessment Scripts**, supporting supervised labs, SME administration and compliance-readiness reviews.
 
+For supervisor review, use the [official requirement traceability and Final Acceptance Checklist](docs/HANDOVER.md#supervisor-requirement-traceability). This is an OS/NIST assessment project: boto3 and cloud scanning are examples of possible tooling, not unimplemented mandatory requirements.
+
 ## Platform profiles and scope
 
 | Profile | Controls | Live collection | Scope |
@@ -129,6 +131,8 @@ cyberassess/collector.py          Original Ubuntu SSH collector
 cyberassess/collectors/           Ubuntu, Windows and macOS local collectors
 cyberassess/evaluator.py          Shared unchanged evaluation and weighted scoring
 cyberassess/reporting.py          Shared JSON/HTML rendering
+cyberassess/timestamps.py         Explicit local-offset/UTC clock provenance
+comparison_report.py             Historical reviewed snapshot comparison (no collection)
 config/controls.json             Original 15 Ubuntu controls, unchanged
 config/profiles/                 Windows and macOS control definitions
 samples/                         Offline evidence fixtures
@@ -142,6 +146,7 @@ To add a future platform, first document the exact configuration scope, native r
 ## Handover and validation
 
 - [Concise handover](docs/HANDOVER.md) — first-run checklist and acceptance gates.
+- [Control coverage](docs/control_master_table.md) — all 40 profile checks, selected NIST references and interpretation limits.
 - [Fresh-machine setup](docs/setup.md) — macOS, Linux, Windows, dependencies and local privilege limitations.
 - [SSH target guide](docs/ssh-target-setup.md) — Ubuntu remote authorization, key/trust and exact sudo requirements.
 - [Operator runbook](docs/handover-runbook.md) — transfers, live assessment, evidence review and report retention.

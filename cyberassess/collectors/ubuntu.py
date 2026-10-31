@@ -69,6 +69,8 @@ class UbuntuLocalCollector(SSHCollector):
             "host": self.host,
             "username": self.username,
             "read_only": True,
+            "scope": "Authorized local Ubuntu machine; selected configuration, package inventory and supported service-status checks.",
+            "limitations": bundle["collector"]["limitations"],
         }
         bundle["collected_at"] = bundle["collector"]["collected_at"]
         return bundle

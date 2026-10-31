@@ -166,14 +166,27 @@ def _timestamp(value: str | datetime) -> str:
 
 
 def _infer_mode(bundle: dict) -> str:
-    method = str(bundle.get("collector", {}).get("method", "")).lower()
-    if "sample" in method or "demo" in method:
+    collector = bundle.get("collector")
+    if collector is None:
+        collector = {}
+    if not isinstance(collector, dict):
+        raise ValueError("Collector metadata must be an object.")
+    method = str(collector.get("method", "")).lower()
+    demo_mode = any(isinstance(value, str) and value.lower() == "demo"
+                    for value in (bundle.get("assessment_mode"), collector.get("mode")))
+    if demo_mode or collector.get("sample_data") is True or "sample" in method or "demo" in method:
         return "demo"
     if "ssh" in method:
         return "ssh"
     if "local" in method:
         return "local"
     return "unknown"
+
+
+def validate_live_evidence(bundle: dict) -> None:
+    """Reject known sample provenance at every live reporting entry point."""
+    if _infer_mode(bundle) == "demo":
+        raise ValueError("Demonstration evidence cannot be presented as a live assessment.")
 
 
 def build_profile_report(
@@ -195,6 +208,10 @@ def build_profile_report(
     evidence = bundle.get("evidence")
     if not isinstance(evidence, dict):
         raise ValueError("An assessment bundle must contain an evidence object.")
+    inferred_mode = _infer_mode(bundle)
+    mode = assessment_mode or inferred_mode
+    if mode in {"local", "ssh"}:
+        validate_live_evidence(bundle)
     controls = profile.load_controls()
     assessment = evaluate_baseline(controls, evidence)
     for control, result in zip(controls, assessment["results"]):
@@ -205,7 +222,6 @@ def build_profile_report(
             evidence_source=f"{control['source']}.{control['key']}",
         )
 
-    mode = assessment_mode or _infer_mode(bundle)
     report = {
         **bundle,
         "schema_version": "2.0",
@@ -225,9 +241,7 @@ def build_profile_report(
     if completed_at is not None:
         report["assessment_completed_at"] = _timestamp(completed_at)
 
-    collected_at = bundle.get("collected_at") or bundle.get("collector", {}).get("collected_at")
+    collected_at = bundle.get("collected_at") or (bundle.get("collector") or {}).get("collected_at")
     if collected_at is not None:
         report["collected_at"] = _timestamp(collected_at)
-    elif completed_at is not None and mode in {"local", "ssh"}:
-        report["collected_at"] = _timestamp(completed_at)
     return report

@@ -242,12 +242,7 @@ review both files before sharing. Do not publish real evidence as demo content.
 
 ## Handover acceptance checklist
 
-- [ ] Receiving operator has the reviewed source commit and fresh local `.venv`.
-- [ ] Dependency check, test suite and portability check pass on the new laptop.
-- [ ] Demo JSON/HTML open and show the expected counts and score.
-- [ ] Target inventory, scope, owner and authorization are recorded.
-- [ ] Matching local OS/tools/read privileges are verified; for Ubuntu SSH, key,
-      host-key trust and exact noninteractive sudo checks are verified.
-- [ ] An authorized live run is reviewed, or live validation is explicitly pending.
-- [ ] Paired reports and run records are stored securely with a working backup.
-- [ ] Operator knows how to escalate access/evidence errors and arrange reassessment.
+Use the single [Final Acceptance Checklist](HANDOVER.md#final-acceptance-checklist)
+for supervisor sign-off, requirements, runtime/CI evidence, authorized native
+validation and secure report retention. The procedures above provide the
+operational detail; do not sign off an unperformed live check as successful.

@@ -82,6 +82,8 @@ def _command_result(command):
         output = "0"
     elif "pwquality.conf" in command:
         output = "14"
+    elif "/etc/pam.d/common-password" in command:
+        output = "14"
     elif "auditd.service" in command:
         output = "active"
     elif "unattended-upgrades" in command:
@@ -162,10 +164,10 @@ def test_local_command_failures_remain_unavailable_evidence(monkeypatch, failure
     assert bundle["evidence"]["firewall"]["_collection_ok"] is False
     assert bundle["evidence"]["sshd"]["_collection_ok"] is False
     assert assessment["passed"] == 0
-    assert assessment["errors"] == 14
-    # The original Ubuntu collector represents no explicit password policy as
-    # FAIL.  This inherited behavior is intentionally preserved in this adapter.
-    assert assessment["failed"] == 1
+    assert assessment["errors"] == 15
+    # Failed reads cannot prove that a password setting is absent. Confirmed,
+    # readable absence still has the evaluator's existing Not configured FAIL.
+    assert assessment["failed"] == 0
 
 
 def test_local_timeout_must_be_positive():

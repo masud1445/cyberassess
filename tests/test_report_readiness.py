@@ -49,7 +49,10 @@ def test_conflicting_live_provenance_is_not_silently_resolved():
 def test_sample_data_flag_keeps_demo_warning_even_with_a_conflicting_live_mode():
     report = build_profile_report("macos", {"evidence": {}, "collector": {
         "method": "local / native commands", "sample_data": True,
-    }}, assessment_mode="local")
+    }}, assessment_mode="demo")
+    # Imported historical documents still get a defensive warning even though
+    # the typed builder now rejects creating this inconsistent live envelope.
+    report["assessment_mode"] = "local"
     document = render_html(report)
     assert "Demonstration data" in document
     assert "Live native assessment" not in document

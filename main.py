@@ -9,7 +9,7 @@ import platform
 from cyberassess import __version__
 from cyberassess.evaluator import evaluate_baseline
 from cyberassess.platforms import detect_local_profile
-from cyberassess.profiles import build_profile_report, get_profile, list_profiles
+from cyberassess.profiles import build_profile_report, get_profile, list_profiles, validate_live_evidence
 from cyberassess.reporting import save_html, save_json
 
 
@@ -65,7 +65,8 @@ def _run_legacy(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
                 port=args.port,
                 accept_new_host=args.accept_new_host,
             ).collect()
-        except CollectionError as exc:
+            validate_live_evidence(evidence_bundle)
+        except (CollectionError, ValueError) as exc:
             print(f"ERROR: {exc}")
             return 2
 

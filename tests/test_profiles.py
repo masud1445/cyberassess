@@ -198,12 +198,15 @@ def test_profile_report_adds_metadata_without_mutating_demo_bundle():
 @pytest.mark.parametrize("mode", ["local", "ssh"])
 def test_completed_live_report_records_provided_completion_timestamp(mode):
     when = "2026-10-19T10:30:00+00:00"
-    report = build_profile_report("ubuntu", get_profile("ubuntu").load_demo(), assessment_mode=mode, completed_at=when)
-    assert report["collected_at"] == when
+    bundle = {"evidence": {}, "collector": {"method": mode + " / injected test responses"}}
+    report = build_profile_report("ubuntu", bundle, assessment_mode=mode, completed_at=when)
+    assert report["assessment_completed_at"] == when
+    assert "collected_at" not in report  # Completion cannot stand in for an unobserved collection time.
 
 
 def test_collector_collection_time_is_preserved():
     bundle = get_profile("ubuntu").load_demo()
+    bundle["collector"] = {"method": "local / injected test responses"}
     bundle["collected_at"] = "2026-10-19T10:00:00+00:00"
     report = build_profile_report("ubuntu", bundle, assessment_mode="local", completed_at="2026-10-19T10:00:01+00:00")
     assert report["collected_at"] == bundle["collected_at"]

@@ -32,6 +32,13 @@ def read_report(directory):
     return json.loads(paths[0].read_text(encoding='utf-8'))
 
 
+def injected_native_bundle(profile_id, mode='local'):
+    """Reuse scalar test values, with explicit injected-source provenance."""
+    bundle = get_profile(profile_id).load_demo()
+    bundle['collector'] = {'method': mode + ' / injected test responses', 'mode': mode, 'sample_data': False}
+    return bundle
+
+
 def test_legacy_demo_preserves_golden_json_and_console(tmp_path):
     destination = tmp_path / 'reports café'
     result = invoke('--demo', '--output', destination)
@@ -46,6 +53,8 @@ def test_legacy_demo_preserves_golden_json_and_console(tmp_path):
 def test_legacy_ssh_dispatch_and_json_remain_compatible(monkeypatch, tmp_path):
     calls = []
     bundle = {key: value for key, value in GOLDEN.items() if key != 'assessment'}
+    bundle['collector'] = {**bundle['collector'], 'method': 'SSH / Paramiko'}
+    expected = {**GOLDEN, 'collector': bundle['collector']}
 
     class FakeSSH:
         def __init__(self, **kwargs):
@@ -59,7 +68,7 @@ def test_legacy_ssh_dispatch_and_json_remain_compatible(monkeypatch, tmp_path):
     status = cli.main(['--host', 'authorized.example.test', '--user', 'auditor', '--key', '/approved/key', '--port', '2222', '--accept-new-host', '--output', str(tmp_path)])
     assert status == 0
     assert calls == [{'host': 'authorized.example.test', 'username': 'auditor', 'key_file': '/approved/key', 'port': 2222, 'accept_new_host': True}]
-    assert read_report(tmp_path) == GOLDEN
+    assert read_report(tmp_path) == expected
 
 
 def test_legacy_connection_error_returns_two(monkeypatch, tmp_path, capsys):
@@ -105,7 +114,7 @@ def test_explicit_ubuntu_ssh_uses_original_collector(monkeypatch, tmp_path):
             calls.append(kwargs)
 
         def collect(self):
-            return {key: value for key, value in GOLDEN.items() if key != 'assessment'}
+            return injected_native_bundle('ubuntu', 'ssh')
 
     monkeypatch.setattr('cyberassess.collector.SSHCollector', FakeSSH)
     assert cli.main(['--profile', 'ubuntu', '--host', 'authorized.example.test', '--user', 'auditor', '--key', '/approved/key', '--output', str(tmp_path)]) == 0
@@ -124,7 +133,7 @@ def test_auto_detect_dispatch_is_local(monkeypatch, tmp_path, flags):
 
     def fake_collect(profile_id, args, mode):
         calls.append((profile_id, mode))
-        return get_profile('windows').load_demo()
+        return injected_native_bundle('windows')
 
     monkeypatch.setattr(cli, '_collect_profile', fake_collect)
     assert cli.main(['--auto-detect', *flags, '--output', str(tmp_path)]) == 0
@@ -190,7 +199,7 @@ def test_explicit_local_profile_uses_selected_collector(monkeypatch, tmp_path, p
     class FakeLocal:
         def collect(self):
             calls.append(profile_id)
-            return get_profile(profile_id).load_demo()
+            return injected_native_bundle(profile_id)
 
     monkeypatch.setattr(selected, class_name, FakeLocal)
     monkeypatch.setattr(cli, 'detect_local_profile', lambda: profile_id)
@@ -272,7 +281,7 @@ def test_elevated_read_opt_in_reaches_only_local_macos_collector(monkeypatch, tm
             assert before_collection.index(authorization) < before_collection.index('Assessment in progress...')
             assert before_collection.index(credential_policy) < before_collection.index('Assessment in progress...')
             notices.append(before_collection)
-            return get_profile('macos').load_demo()
+            return injected_native_bundle('macos')
 
     monkeypatch.setattr('cyberassess.collectors.macos.MacOSCollector', FakeMac)
     monkeypatch.setattr(cli, 'detect_local_profile', lambda: 'macos')
@@ -292,7 +301,7 @@ def test_normal_local_macos_does_not_enable_elevated_reads(monkeypatch, tmp_path
             calls.append(options)
 
         def collect(self):
-            return get_profile('macos').load_demo()
+            return injected_native_bundle('macos')
 
     monkeypatch.setattr('cyberassess.collectors.macos.MacOSCollector', FakeMac)
     monkeypatch.setattr(cli, 'detect_local_profile', lambda: 'macos')

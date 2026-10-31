@@ -5,6 +5,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# Sanitized diagnostics still contain real security-state observations.
+/macos-diagnostics.json
 .ssh/
 id_rsa
 id_ed25519
@@ -24,9 +26,11 @@ __MACOSX/
 # Generated assessment reports
 reports/audit_*.json
 reports/audit_*.html
+reports/audit_*.pdf
 # Profile demos and per-run --output directories beneath reports/
 reports/**/audit_*.json
 reports/**/audit_*.html
+reports/**/audit_*.pdf
 reports/LIVE_*.json
 reports/LIVE_*.html
 reports/BEFORE_*.json

@@ -227,7 +227,7 @@ class WindowsCollector:
             return self._failure(source, "Read-only query failed; the feature, policy, or required permissions may be unavailable.")
         try:
             data, safe_raw = _normalize(source, _parse_json(result.stdout))
-        except (ValueError, TypeError, UnicodeError):
+        except (ValueError, TypeError, UnicodeError, RecursionError):
             return self._failure(source, "Read-only query returned missing, invalid, or ambiguous evidence.")
         return {**data, "_collection_ok": True,
                 "_raw": json.dumps(safe_raw, sort_keys=True, ensure_ascii=True)}

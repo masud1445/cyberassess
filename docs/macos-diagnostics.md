@@ -11,12 +11,12 @@ sanitized values. It does not change the assessment CLI, control definitions,
 scoring, report presentation or assessment JSON format. It executes only the
 three affected collection paths, with elevated reads disabled.
 
-The diagnostic utility has 35 regression tests covering known states, absence,
-denial, malformed
-output, management scope, privacy, platform rejection and no automatic elevation.
-The combined suite passes **1,266 tests** and the portability checks pass.
-These tests do not establish live resolution
-of MAC-010/011/012 on a real Mac.
+The diagnostic follow-up added 35 regression tests covering known states,
+absence, denial, malformed output, management scope, privacy, platform rejection
+and no automatic elevation. Its historical combined suite passed **1,266 tests**;
+consult the [current validation record](portability-validation.md) for the latest
+suite and exact hosted results. These tests do not establish live resolution of
+MAC-010/011/012 on a real Mac.
 
 ## Exact commands
 
@@ -41,7 +41,9 @@ collector implementation, including any local changes that leave
 `git rev-parse HEAD` unchanged.
 
 The utility writes its diagnostic document to stdout. The first command above
-explicitly saves it in the current directory. Exit zero means the diagnostic
+explicitly saves it in the current directory. Keep this real configuration
+evidence private and review it before sharing, even though identifiers and raw
+native output are omitted. Exit zero means the diagnostic
 document was generated, not that the security controls passed. An unsupported
 platform or invalid arguments returns exit two before collection. The utility
 accepts no option to enable elevated reads.

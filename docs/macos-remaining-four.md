@@ -12,12 +12,15 @@ ERROR. No latest live JSON or exact getter output is available in this checkout.
 The running revision and sanitized native diagnostics have been requested;
 the receiving Mac's exact failure cause is not yet established.
 
-These changes were reviewed against
-`8ddacee468d991ee1f3ec334959e91ed600c38bd` (1,114 tests). The combined suite
-passes **1,266 tests**, including scoped-preference, console-policy,
+The historical collection changes were reviewed against
+`8ddacee468d991ee1f3ec334959e91ed600c38bd` (1,114 tests). That combined suite
+passed **1,266 tests**, including scoped-preference, console-policy,
 privilege-guidance, diagnostic and native-path regressions. Native getters,
 supported output formats, CLI and the existing explicit elevation contract
 are unchanged.
+
+The [current validation record](portability-validation.md) supersedes that
+historical test total and records later changes and exact hosted results.
 
 The latest requirement targets the **current console user**. Previously only
 the native getter required the invoking user to match the console; a readable

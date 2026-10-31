@@ -5,6 +5,50 @@ The reviewed work is on **`feature/multiplatform-cyberassess`**; obtain the exac
 commit from the maintainer. Do not assume `main` contains it or merge it as part
 of setup. [Full operator runbook](handover-runbook.md).
 
+## Supervisor requirement traceability
+
+This project implements **Pillar 2 / Sub-Track 2.1: Compliance & Baseline Check
+Scripts** for authorized operating-system assessments. The requirement lists
+libraries such as Paramiko, boto3, os and json as examples, and permits CIS **or**
+NIST references. CyberAssess uses Paramiko and native OS/standard-library APIs
+with selected NIST SP 800-53 references. AWS/cloud scanning, boto3 and a complete
+CIS assessment are not mandatory parts of this established OS scope.
+
+| Official requirement | Existing implementation | Relevant source | Successful verification evidence | Fulfilment | Genuine remaining gap |
+| --- | --- | --- | --- | --- | --- |
+| Automated Python audit scripts using appropriate tools | Python CLI; Paramiko Ubuntu SSH; native Ubuntu, Windows and macOS reads; stdlib os/json/subprocess/ctypes | `main.py`, `cyberassess/collector.py`, `cyberassess/collectors/` | CLI/collector/platform suites; three runnable demos; [hosted and local verification](portability-validation.md) | Met for the OS scope | Receiving-machine permissions and authorized native acceptance remain separate. No cloud-scanning requirement established. |
+| Parse OS/cloud evidence against CIS or NIST | 15 Ubuntu, 13 Windows and 12 macOS configuration checks with explicit values, operators and selected NIST references | `config/controls.json`, `config/profiles/`, `cyberassess/profiles.py` | Profile validation, parser/denial/malformed-output tests; [all control mappings and scope](control_master_table.md) | Met for selected OS/NIST checks | Limited configuration coverage; not a full NIST/CIS assessment or certification. Unknown native state remains ERROR. |
+| Automated Pass/Fail scoring | Shared evaluator produces PASS/FAIL/ERROR; High=3, Medium=2, Low=1; only PASS earns numerator weight | `cyberassess/evaluator.py` | Evaluator and Ubuntu golden regressions; 54.3% reference demo; ERROR denominator tests | Met | ERROR is unavailable evidence, not a confirmed insecure state. Resolve evidence limitations before interpreting a grade. |
+| Gap reports suitable for SME reviews and IT grading | Self-contained JSON/HTML, expected/actual values, severity, NIST references, evidence, findings, display-only guidance and A4 output | `cyberassess/reporting.py`, `samples/`, `scripts/check_portability.py` | Report/provenance/timestamp suites, JSON/HTML comparison, browser/A4 review and portable demos | Met with documented limitations | Supervisor must approve scope and grading policy; snapshots and weighted baseline verdicts do not certify compliance. |
+
+Test evidence establishes the stated code paths and fixtures, not the security
+state of an untested machine. Use the exact source commit and CI run in the
+[validation record](portability-validation.md), then complete the checklist below.
+
+## Architecture and technology stack
+
+```mermaid
+flowchart LR
+    CLI[Python CLI and mode validation] --> Profile[OS detection and versioned profile]
+    Profile --> Native[Authorized native or Ubuntu SSH reads]
+    Native --> Evidence[Typed evidence and collection limitations]
+    Evidence --> Eval[Shared evaluator and unchanged weights]
+    Eval --> Reports[JSON and self-contained HTML snapshots]
+    Demo[Explicit offline demo fixtures] --> Evidence
+```
+
+Live and demo inputs are separate; known demo provenance cannot be promoted to
+a live report. Read failures cannot establish a secure default. The technology
+stack is Python 3.10–3.13, Paramiko, native PowerShell/macOS/POSIX read utilities,
+CoreFoundation via ctypes, JSON, HTML/CSS, pytest, constrained pip dependencies
+and a five-job GitHub Actions matrix. There is no database, web service,
+continuous monitor, cloud scanner or automatic remediation component.
+
+The legacy `comparison_report.py` is a supplementary Ubuntu lab snapshot
+comparison utility, not another collector. Its fixed input filenames require
+the operator to supply reviewed before/after JSON. A snapshot transition alone
+does not prove remediation or authorization.
+
 ## First run on a fresh machine
 
 1. Clone/check out the approved revision, or restore its Git bundle using the
@@ -52,8 +96,10 @@ machine, and percentages across different profiles are not comparable rankings.
   and feature limitations](setup.md#live-platform-prerequisites). There is no
   automatic elevation, WinRM or remote macOS collector. In a remote session,
   Python/source/dependencies must be installed on the target and the CLI launched
-  there. macOS screen-saver evidence concerns the invoking user's explicit
-  preferences; blanket root execution changes that scope.
+  there. macOS screen-lock evidence requires the non-root invoking and current
+  console user to match. Native effective status is preferred; exact own-user
+  configured fallbacks are labelled separately. Blanket root execution cannot
+  establish another user's console policy.
 - Preserve prior reports. Use a separate `--output` directory per run to avoid
   timestamp collisions, and review every ERROR as unavailable evidence.
 
@@ -86,3 +132,31 @@ Acceptance requires passing local dependency/tests/demos and either an approved,
 reviewed native/live run or an explicit record that native/live validation is
 pending. Escalate unsupported/denied evidence to the owner; do not widen sudo or
 weaken host security just to increase the score.
+
+## Final Acceptance Checklist
+
+Complete once per handed-over revision; leave native items pending until an
+authorized receiving-machine run is reviewed. Supervisor/date/sign-off belong
+in the organization's run record, not in a fabricated application result.
+
+- [ ] Supervisor agrees the OS-only Sub-Track 2.1 scope and requirement mapping.
+- [ ] Exact feature-branch commit, clean checkout, receiving operator and fresh
+      machine-local virtual environment are recorded; no merge to `main` is assumed.
+- [ ] Dependency check, full tests, portability check and all five native CI jobs
+      pass for the handed-over source; preserve the exact CI link and test count.
+- [ ] Ubuntu/Windows/macOS demos open as samples with 15/13/12 controls; JSON/HTML
+      counts, weighted scores, times, evidence and A4 output agree.
+- [ ] Target ownership/authorization, profile/version, native tools and account
+      context are recorded; SSH keys, host trust and exact sudo reads are verified
+      where applicable. No credentials enter the repository or handover archive.
+- [ ] Live evidence is reviewed against native administrator-observed state, or
+      each unverified platform/permission/model limitation is explicitly accepted.
+      MAC-005/MAC-012 are not forced to PASS; missing/denied evidence remains ERROR.
+- [ ] Known limitations, snapshot scope, non-certification wording and separately
+      authorized remediation/reassessment are understood by the receiving operator.
+- [ ] Paired reports, authorization and source/runtime records are retained under
+      access control with a working backup. Historical lab artifacts and new
+      diagnostics are reviewed for identifiers before any sharing.
+
+Baseline readiness is **Ready with Documented Limitations** until the supervisor
+records receiving-machine live acceptance. Hosted tests are not a substitute for it.
