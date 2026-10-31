@@ -203,23 +203,24 @@ def test_safe_collection_diagnostic_is_visible_for_new_profile_errors(platform, 
     result = report["assessment"]["results"][0]
     result.update(evidence_source=source, raw_evidence=diagnostic)
     document = render_html(report)
-    assert "Collection diagnostic" in document
+    assert "Technical diagnostic" in document
     assert diagnostic in document
 
 
-def test_collection_diagnostics_are_redacted_escaped_and_bounded():
+def test_collection_diagnostics_are_redacted_escaped_and_complete():
     report = report_for(status="ERROR")
     result = report["assessment"]["results"][0]
     result["raw_evidence"] = (
         'Read-only query failed; password=hidden-password; Authorization: Bearer hidden-bearer; '
         '<img src=x onerror="alert(1)">; '
         '-----BEGIN OPENSSH PRIVATE KEY-----\nhidden-key\n-----END OPENSSH PRIVATE KEY-----; '
-        + "x" * 1000 + "hidden-trailing-diagnostic"
+        + "x" * 1000 + "complete-diagnostic-end"
     )
     document = render_html(report)
-    assert "Collection diagnostic" in document
+    assert "Technical diagnostic" in document
     assert "&lt;img" in document
-    for value in ("hidden-password", "hidden-bearer", "hidden-key", "hidden-trailing-diagnostic"):
+    assert "x" * 1000 + "complete-diagnostic-end" in document
+    for value in ("hidden-password", "hidden-bearer", "hidden-key"):
         assert value not in document
     assert not any(tag == "img" for tag, _ in Markup(document).tags)
 
@@ -235,7 +236,7 @@ def test_quoted_credentials_with_spaces_and_escapes_are_redacted_entirely():
     document = render_html(report)
     for value in ("hidden first", "first and last", "quoted secret", "hidden escaped", "access-key"):
         assert value not in document
-    assert "Collection diagnostic" in document
+    assert "Technical diagnostic" in document
 
 
 @pytest.mark.parametrize("status,profile,source", [
@@ -248,7 +249,7 @@ def test_diagnostics_never_expose_legacy_unknown_or_successful_collection_output
     result = report["assessment"]["results"][0]
     result.update(profile=profile, evidence_source=source, raw_evidence="Read-only query hidden-diagnostic")
     document = render_html(report)
-    assert "Collection diagnostic" not in document
+    assert "Technical diagnostic" not in document
     assert "hidden-diagnostic" not in document
 
 
@@ -293,6 +294,91 @@ def test_print_appendix_retains_full_evidence_and_guidance_outside_narrow_table_
 
 def test_assessment_error_review_message_uses_singular_grammar():
     assert "1 control requires review" in render_html(report_for(status="ERROR"))
+
+
+_MACOS_PRIVILEGE_DIAGNOSTIC = (
+    "Unavailable: automatic network time needs a native status or verified enforced machine policy. "
+    "Unavailable: native query requires additional local privileges. "
+    "No privileged read was attempted. If the operator authorizes verification and "
+    "administrator-approved passwordless access covers the exact read-only getter, "
+    "rerun local macOS collection with --allow-elevated-read. "
+    "Otherwise retain ERROR; unsupported or ambiguous status remains ERROR."
+)
+
+
+def test_error_card_has_concise_context_and_complete_expandable_printable_diagnostic():
+    report = report_for("macOS", "macos", status="ERROR")
+    result = report["assessment"]["results"][0]
+    diagnostic = _MACOS_PRIVILEGE_DIAGNOSTIC + " Further native evidence remains unavailable." * 30
+    result.update(control_id="MAC-012", title="Network time configuration is enabled",
+                  evidence_source="network_time.enabled", raw_evidence=diagnostic)
+    original = deepcopy(report)
+    document = render_html(report)
+    card = document.split('<article class="error-item">', 1)[1].split('</article>', 1)[0]
+    visible, _, expanded = card.partition('<details class="evidence-details">')
+    summary = "Native network-time status could not be reliably verified with the current privileges. No state was inferred."
+    assert summary in visible
+    assert "Unavailable:" not in visible
+    assert "Collection note:" not in visible
+    assert "Technical diagnostic" not in visible
+    assert diagnostic in expanded
+    assert "…" not in card
+    assert "Collection note:" in expanded and "Evidence unavailable" in expanded
+    assert 'open' not in card.split('<details', 1)[1].split('>', 1)[0]
+    ordering = [card.index(value) for value in (
+        summary, "Evidence source", "Observed state", "Next action:",
+        "Collection note:", "Technical diagnostic", "Remediation guidance",
+    )]
+    assert ordering == sorted(ordering)
+    appendix = document.split('<section class="section print-evidence-section"', 1)[1]
+    assert diagnostic in appendix
+    assert "Technical diagnostic" in appendix and "<details" not in appendix
+    assert "1 control requires review" in document
+    assert report == original
+
+
+@pytest.mark.parametrize("source", ["update_check.enabled", "remote_login.enabled", "network_time.enabled"])
+def test_error_next_action_repeats_only_supported_existing_privilege_guidance(source):
+    report = report_for("macOS", "macos", status="ERROR")
+    report["assessment"]["results"][0].update(evidence_source=source, raw_evidence=_MACOS_PRIVILEGE_DIAGNOSTIC)
+    document = render_html(report)
+    card = document.split('<article class="error-item">', 1)[1].split('</article>', 1)[0]
+    visible = card.partition('<details')[0]
+    assert "Next action:" in visible
+    assert "If authorized, rerun with --allow-elevated-read to attempt additional read-only verification." in visible
+
+
+@pytest.mark.parametrize("profile,source,diagnostic", [
+    ("macos", "screen_lock.password_required", _MACOS_PRIVILEGE_DIAGNOSTIC),
+    ("macos", "screen_lock_delay.seconds", _MACOS_PRIVILEGE_DIAGNOSTIC),
+    ("windows", "bitlocker.protection_enabled", "Read-only query " + _MACOS_PRIVILEGE_DIAGNOSTIC),
+    ("ubuntu", "time_sync.status", _MACOS_PRIVILEGE_DIAGNOSTIC),
+    ("macos", "network_time.enabled", "Unavailable: native preference resolution returned no reliable scalar."),
+    ("macos", "network_time.enabled", "Unavailable: explicit elevated read failed."),
+    ("macos", "network_time.enabled", _MACOS_PRIVILEGE_DIAGNOSTIC + " Explicit elevated read failed: access denied."),
+    ("macos", "network_time.enabled", _MACOS_PRIVILEGE_DIAGNOSTIC.replace("No privileged read was attempted.", "")),
+    ("macos", "network_time.enabled", _MACOS_PRIVILEGE_DIAGNOSTIC.replace("--allow-elevated-read", "")),
+])
+def test_error_next_action_does_not_invent_privilege_advice(profile, source, diagnostic):
+    report = report_for(profile=profile, status="ERROR")
+    report["assessment"]["results"][0].update(evidence_source=source, raw_evidence=diagnostic)
+    document = render_html(report)
+    card = document.split('<article class="error-item">', 1)[1].split('</article>', 1)[0]
+    assert "Next action:" not in card
+
+
+def test_error_summary_does_not_assume_permissions_and_preserves_complete_notes_and_guidance():
+    report = report_for("macOS", "macos", status="ERROR")
+    result = report["assessment"]["results"][0]
+    result.update(evidence_source="network_time.enabled", raw_evidence="Unavailable: native preference resolution returned no reliable scalar.",
+                  notes="Collection note. " * 100 + "Complete collection note.",
+                  remediation="Review the existing operator guidance. " * 100 + "Complete guidance.")
+    document = render_html(report)
+    card = document.split('<article class="error-item">', 1)[1].split('</article>', 1)[0]
+    assert "Native network-time status could not be reliably verified. No state was inferred." in card
+    assert "with the current privileges" not in card
+    assert "Complete collection note." in card and "Complete guidance." in card
+    assert "…" not in card
 
 
 def test_render_is_offline_accessible_and_does_not_mutate_input():

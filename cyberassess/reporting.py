@@ -69,8 +69,8 @@ def _display_value(result: dict, value: Any, expected: bool = False, ubuntu: boo
     return _evidence_text(value if value is not None else "Not available")
 
 
-def _evidence_text(value: Any, limit: int = 600) -> str:
-    """Bound displayed evidence and redact recognizable credential material.
+def _evidence_text(value: Any, limit: int | None = 600) -> str:
+    """Redact recognizable credentials and optionally bound displayed evidence.
 
     Collectors are responsible for producing non-sensitive evidence. This extra
     display boundary never serializes arbitrary nested input or entire sources.
@@ -94,7 +94,7 @@ def _evidence_text(value: Any, limit: int = 600) -> str:
                   "[credential field redacted]", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[A-Z0-9]{16})\b",
                   "[credential redacted]", text)
-    return text[:limit] + ("…" if len(text) > limit else "")
+    return text if limit is None else text[:limit] + ("…" if len(text) > limit else "")
 
 
 def _evidence_for_result(result: dict, ubuntu: bool = True) -> str:
@@ -180,7 +180,7 @@ def _safe_raw_evidence(result: dict) -> str:
 
 
 def _collection_diagnostic(result: dict) -> str:
-    """Show bounded diagnostics emitted by the new, sanitized local collectors."""
+    """Keep approved collector diagnostics complete, redacted and escaped later."""
     if str(result.get("status", "")).upper() != "ERROR":
         return ""
     profile = result.get("profile")
@@ -195,7 +195,46 @@ def _collection_diagnostic(result: dict) -> str:
     known_ubuntu = profile == "ubuntu" and source in {
         "sshd", "firewall", "files", "accounts", "password_policy", "auditd", "updates", "time_sync", "services",
     } and raw in _UBUNTU_DIAGNOSTICS
-    return _evidence_text(raw, 800) if known_windows or known_macos or known_ubuntu else ""
+    return _evidence_text(raw, None) if known_windows or known_macos or known_ubuntu else ""
+
+
+def _error_summary(result: dict) -> str:
+    source = str(result.get("evidence_source", "")).partition(".")[0]
+    subjects = {
+        "network_time": "Native network-time status",
+        "update_check": "Automatic update-check status",
+        "remote_login": "Native Remote Login status",
+        "screen_lock": "The current user's screen-lock password requirement",
+        "screen_lock_delay": "The current user's screen-lock password delay",
+    }
+    subject = subjects.get(source, "Security-setting evidence") if result.get("profile") == "macos" else "Security-setting evidence"
+    diagnostic = _collection_diagnostic(result)
+    privileges = " with the current privileges" if "native query requires additional local privileges." in diagnostic else ""
+    return f"{subject} could not be reliably verified{privileges}. No state was inferred."
+
+
+def _error_next_action(result: dict) -> str:
+    """Repeat only the collector's existing, applicable opt-in read guidance."""
+    source = str(result.get("evidence_source", "")).partition(".")[0]
+    diagnostic = _collection_diagnostic(result)
+    if (result.get("profile") == "macos" and source in {"update_check", "remote_login", "network_time"}
+            and "No privileged read was attempted." in diagnostic
+            and "--allow-elevated-read" in diagnostic and "Explicit elevated read failed:" not in diagnostic):
+        return "If authorized, rerun with --allow-elevated-read to attempt additional read-only verification."
+    return ""
+
+
+def _error_overview(result: dict, ubuntu: bool) -> str:
+    source = _safe(_evidence_text(result.get("evidence_source") or "Not recorded", None))
+    action = _error_next_action(result)
+    action_html = f'<p class="error-next-action"><strong>Next action:</strong> {_safe(action)}</p>' if action else ""
+    return (
+        f'<p class="error-summary">{_safe(_error_summary(result))}</p>'
+        '<div class="error-context">'
+        f'<div><h4>Evidence source</h4><p class="evidence-value">{source}</p></div>'
+        f'<div><h4>Observed state</h4><p class="evidence-value">{_safe(_evidence_for_result(result, ubuntu))}</p></div>'
+        f'</div>{action_html}'
+    )
 
 
 def _fix_command(result: dict, ubuntu: bool = True) -> str:
@@ -327,17 +366,18 @@ def _severity_badge(severity: str) -> str:
     return f'<span class="severity-badge {css}">{_safe(value)}</span>'
 
 
-def _evidence_details(result: dict, ubuntu: bool = True, printable: bool = False) -> str:
+def _evidence_details(result: dict, ubuntu: bool = True, printable: bool = False, context_shown: bool = False) -> str:
+    error = str(result.get("status", "")).upper() == "ERROR"
     notes = result.get("notes")
-    note_html = f'<p class="collection-note"><strong>Collection note:</strong> {_safe(_evidence_text(notes))}</p>' if notes else ""
+    note_html = f'<p class="collection-note"><strong>Collection note:</strong> {_safe(_evidence_text(notes, None if error else 600))}</p>' if notes else ""
     description = result.get("description")
-    description_html = f'<p class="control-description">{_safe(_evidence_text(description, 1200))}</p>' if description else ""
+    description_html = f'<p class="control-description">{_safe(_evidence_text(description, None if error else 1200))}</p>' if description else ""
     source = _safe(_evidence_text(result.get("evidence_source") or "Not recorded"))
     raw = _safe_raw_evidence(result)
     raw_html = f'<div><h4>Supporting status</h4><pre class="raw-evidence">{_safe(raw)}</pre></div>' if raw else ""
     diagnostic = _collection_diagnostic(result)
-    diagnostic_html = f'<div><h4>Collection diagnostic</h4><p class="evidence-value">{_safe(diagnostic)}</p></div>' if diagnostic else ""
-    remediation = _safe(_evidence_text(result.get("remediation") or "Review the selected baseline and your organization’s security policy.", 1600))
+    diagnostic_html = f'<div><h4>Technical diagnostic</h4><p class="evidence-value">{_safe(diagnostic)}</p></div>' if diagnostic else ""
+    remediation = _safe(_evidence_text(result.get("remediation") or "Review the selected baseline and your organization’s security policy.", None if error else 1600))
     source_html = f'<div><h4>Evidence source</h4><p class="evidence-value">{source}</p></div>'
     observed_html = f'<div><h4>Observed state</h4><p class="evidence-value">{_safe(_evidence_for_result(result, ubuntu))}</p></div>'
     remediation_html = f'<div><h4>Remediation guidance</h4><p>{remediation}</p></div>'
@@ -347,15 +387,29 @@ def _evidence_details(result: dict, ubuntu: bool = True, printable: bool = False
             '<div class="print-command"><h4>Suggested command · review before use</h4>'
             f'<pre class="command-block"><code>{_safe(command)}</code></pre></div>' if command else ""
         )
+        evidence_html = (
+            _error_overview(result, ubuntu) + raw_html + note_html + diagnostic_html
+            if error else source_html + observed_html + raw_html + diagnostic_html + note_html
+        )
         return f"""
         <article class="print-evidence-article">
           <div class="print-evidence-heading"><span class="control-id">{_safe(result.get('control_id', ''))}</span>{_status_badge(result.get('status', ''))}<h3>{_safe(result.get('title', ''))}</h3></div>
           <div class="print-evidence-grid">
-            <div class="print-evidence-column">{source_html}{observed_html}{raw_html}{diagnostic_html}{note_html}</div>
+            <div class="print-evidence-column">{evidence_html}</div>
             <div class="print-evidence-column">{description_html}{remediation_html}</div>
           </div>
           {command_html}
         </article>
+        """
+    if error:
+        overview = "" if context_shown else _error_overview(result, ubuntu)
+        return f"""
+        <details class="evidence-details">
+          <summary>Evidence &amp; guidance<span class="sr-only"> for {_safe(result.get('control_id', 'control'))}</span></summary>
+          <div class="details-body">
+            {overview}{description_html}{raw_html}{note_html}{diagnostic_html}{remediation_html}
+          </div>
+        </details>
         """
     return f"""
     <details class="evidence-details">
@@ -594,6 +648,9 @@ a:focus-visible, summary:focus-visible, .table-wrap:focus-visible { outline: 2px
 .error-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 7px; }
 .error-heading h3 { flex-basis: 100%; margin-top: 2px; }
 .error-item > p { font-size: 12px; color: #725b3b; overflow-wrap: anywhere; }
+.error-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-top: 10px; }
+.error-context > div { min-width: 0; }
+.error-next-action { margin-top: 10px; }
 .error-item .evidence-details { margin-top: 12px; }
 .table-wrap { overflow: auto; max-height: 780px; border: 1px solid var(--line); border-radius: 8px; }
 .table-hint { margin-bottom: 10px; color: var(--muted); font-size: 10.5px; }
@@ -994,8 +1051,8 @@ def render_html(report: dict) -> str:
         error_items = "".join(f"""
         <article class="error-item">
           <div class="error-heading"><span class="control-id">{_safe(r.get('control_id', ''))}</span>{_status_badge('ERROR')}<h3>{_safe(r.get('title', ''))}</h3></div>
-          <p>{_safe(_evidence_text(r.get('notes') or 'Evidence could not be reliably collected or interpreted.'))}</p>
-          {_evidence_details(r, ubuntu)}
+          {_error_overview(r, ubuntu)}
+          {_evidence_details(r, ubuntu, context_shown=True)}
         </article>
         """ for r in error_results)
         errors_html = f"""
